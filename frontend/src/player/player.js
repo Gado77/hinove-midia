@@ -1,6 +1,6 @@
-/* ==================== PLAYER.JS (FINAL v6.3 - ORIENTATION SUPPORT) ====================
+/* ==================== PLAYER.JS (FINAL v6.4 - 4 ORIENTATIONS) ====================
+   - Feature: 4 orientações: landscape, portrait, landscape-flipped, portrait-flipped.
    - Feature: Vídeos tocam até o fim (ignoram tempo configurado).
-   - Feature: Suporte a orientação Portrait/Landscape via admin.
    - Fix Zumbis: Limpeza forçada do DOM.
    - Offline First: Cache automático e reprodução sem internet.
    - Status: Indicador de Wi-Fi.
@@ -42,7 +42,7 @@ const State = {
   watchdogTimer: null,
   settings: {},
   realtimeSubscription: null,
-  orientation: 'landscape' // novo campo de estado
+  orientation: 'landscape'
 };
 
 // ==================== 1. BOOTSTRAP ====================
@@ -63,7 +63,6 @@ async function checkAndStart() {
   startClock();
   updateConnectionStatus();
 
-  // Modo Offline
   if (State.isOffline) {
     console.warn('⚠️ Offline Mode');
     const cached = localStorage.getItem('loopin_cached_playlist');
@@ -76,7 +75,6 @@ async function checkAndStart() {
     return;
   }
 
-  // Modo Online
   try {
     const { data: screen } = await supabaseClient
       .from('screens')
@@ -168,7 +166,7 @@ function setupRealtimeUpdates() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'playlist_items' }, () => fetchPlaylist(false))
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'screens', filter: `device_id=eq.${State.deviceId}` }, () => {
       fetchPlaylist(false);
-      loadSettings(); // Vai reaplicar orientação automaticamente ao detectar mudança
+      loadSettings(); // Reaplicará orientação automaticamente
     })
     .subscribe();
 }
@@ -185,14 +183,12 @@ async function fetchPlaylist(isFirstLoad) {
 
     if (!screen?.active_playlist_id) return;
 
-    // Campanhas
     const { data: campaigns } = await supabaseClient
       .from('playlist_items')
       .select(`id, campaign_id, duration, display_order, campaigns!campaign_id (id, name, media_url, media_type, duration_seconds)`)
       .eq('playlist_id', screen.active_playlist_id)
       .order('display_order', { ascending: true });
 
-    // Widgets
     const { data: widgets } = await supabaseClient
       .from('playlist_items')
       .select(`id, widget_id, duration, display_order, dynamic_contents!widget_id (id, name, content_type, configuration)`)
@@ -352,7 +348,6 @@ function renderTicker(item, nextSlot, activeSlot) {
   doTransition(activeSlot, nextSlot, item, null);
 }
 
-// ==================== WIDGET CLIMA (COM SUPORTE A VÍDEO) ====================
 async function renderWeather(item, nextSlot, activeSlot) {
   const city = item.city || 'São Paulo';
 
@@ -383,7 +378,6 @@ async function renderWeather(item, nextSlot, activeSlot) {
   const applyBackground = async (url) => {
     const src = await getCachedUrl(url);
     const isVideo = url.match(/\.(mp4|webm|mov)$/i);
-
     const oldVideo = wrapper.querySelector('.weather-bg-video');
     if (oldVideo) oldVideo.remove();
 
@@ -458,16 +452,13 @@ function renderHTML(item, nextSlot, activeSlot) {
   doTransition(activeSlot, nextSlot, item, null);
 }
 
-// ==================== 7. TRANSIÇÃO (LÓGICA HÍBRIDA) ====================
-
+// ==================== 7. TRANSIÇÃO ====================
 function doTransition(curr, next, item, vid) {
   requestAnimationFrame(() => {
     next.classList.add('active');
     curr.classList.remove('active');
 
-    setTimeout(() => {
-      curr.innerHTML = '';
-    }, CONFIG.FADE_TIME + 200);
+    setTimeout(() => { curr.innerHTML = ''; }, CONFIG.FADE_TIME + 200);
 
     if (vid) {
       vid.style.opacity = 1;
@@ -476,7 +467,6 @@ function doTransition(curr, next, item, vid) {
     } else {
       const el = next.querySelector('.weather-slide, .ticker-slide, img, div');
       if (el) { el.style.transition = 'opacity 0.5s ease-in-out'; el.style.opacity = 1; }
-
       let duration = (item.duration || 10) * 1000;
       console.log(`⏱️ Próximo slide em ${duration / 1000}s`);
       setTimeout(playNext, duration);
@@ -484,46 +474,77 @@ function doTransition(curr, next, item, vid) {
   });
 }
 
-// ==================== 8. ORIENTAÇÃO DA TELA ====================
+// ==================== 8. ORIENTAÇÃO DA TELA (4 MODOS) ====================
+/*
+  Valores aceitos na coluna `orientation` da tabela `screens`:
 
-/**
- * Aplica rotação CSS para modo portrait (vertical).
- * Usamos transform porque a API screen.orientation.lock()
- * não é confiável em TVs e webviews.
- */
+  "landscape"         → 🖥️  Horizontal normal        (0°)   cabo/entrada pra baixo
+  "landscape-flipped" → 🖥️  Horizontal invertido     (180°) cabo/entrada pra cima
+  "portrait"          → 📱  Vertical — cabo pra direita (90°)
+  "portrait-flipped"  → 📱  Vertical — cabo pra esquerda (-90°)
+*/
 function applyOrientation(orientation) {
-  if (orientation === 'portrait') {
-    // Rotaciona o body 90 graus e ajusta dimensões para preencher a tela
-    document.body.style.transform = 'rotate(90deg)';
-    document.body.style.transformOrigin = 'center center';
-    document.body.style.width = '100vh';
-    document.body.style.height = '100vw';
-    document.body.style.position = 'fixed';
-    document.body.style.top = '50%';
-    document.body.style.left = '50%';
-    document.body.style.marginTop = '-50vw';
-    document.body.style.marginLeft = '-50vh';
-    document.body.style.overflow = 'hidden';
-    console.log('📱 Modo Portrait ativado');
-  } else {
-    // Landscape: remove qualquer rotação aplicada
-    document.body.style.transform = '';
-    document.body.style.transformOrigin = '';
-    document.body.style.width = '';
-    document.body.style.height = '';
-    document.body.style.position = '';
-    document.body.style.top = '';
-    document.body.style.left = '';
-    document.body.style.marginTop = '';
-    document.body.style.marginLeft = '';
-    document.body.style.overflow = '';
-    console.log('🖥️ Modo Landscape ativado');
+  const body = document.body;
+
+  // Limpa estilos anteriores primeiro para evitar conflitos
+  body.removeAttribute('style');
+
+  switch (orientation) {
+
+    case 'landscape-flipped':
+      // TV deitada mas de cabeça pra baixo — só rotaciona 180°
+      body.style.transform      = 'rotate(180deg)';
+      body.style.transformOrigin = 'center center';
+      body.style.width          = '100vw';
+      body.style.height         = '100vh';
+      body.style.position       = 'fixed';
+      body.style.top            = '0';
+      body.style.left           = '0';
+      body.style.overflow       = 'hidden';
+      console.log('🖥️ Landscape Flipped (180°)');
+      break;
+
+    case 'portrait':
+      // TV em pé — cabo/conector pra direita (roda 90° sentido horário)
+      body.style.transform      = 'rotate(90deg)';
+      body.style.transformOrigin = 'center center';
+      body.style.width          = '100vh';
+      body.style.height         = '100vw';
+      body.style.position       = 'fixed';
+      body.style.top            = '50%';
+      body.style.left           = '50%';
+      body.style.marginTop      = '-50vw';
+      body.style.marginLeft     = '-50vh';
+      body.style.overflow       = 'hidden';
+      console.log('📱 Portrait (90° — cabo pra direita)');
+      break;
+
+    case 'portrait-flipped':
+      // TV em pé — cabo/conector pra esquerda (roda -90° sentido anti-horário)
+      body.style.transform      = 'rotate(-90deg)';
+      body.style.transformOrigin = 'center center';
+      body.style.width          = '100vh';
+      body.style.height         = '100vw';
+      body.style.position       = 'fixed';
+      body.style.top            = '50%';
+      body.style.left           = '50%';
+      body.style.marginTop      = '-50vw';
+      body.style.marginLeft     = '-50vh';
+      body.style.overflow       = 'hidden';
+      console.log('📱 Portrait Flipped (-90° — cabo pra esquerda)');
+      break;
+
+    case 'landscape':
+    default:
+      // Padrão — horizontal normal, sem rotação
+      console.log('🖥️ Landscape (normal — 0°)');
+      break;
   }
+
   State.orientation = orientation || 'landscape';
 }
 
 // ==================== 9. UTILS ====================
-
 async function getCachedUrl(url) {
   if (!url) return null;
   try {
@@ -536,7 +557,7 @@ async function getCachedUrl(url) {
 
 async function loadSettings() {
   try {
-    // Busca user_id E orientation da tela em uma única query
+    // Busca user_id E orientation em uma única query
     const { data: s } = await supabaseClient
       .from('screens')
       .select('user_id, orientation')
@@ -544,8 +565,7 @@ async function loadSettings() {
       .maybeSingle();
 
     if (s) {
-      // Aplica orientação sempre que loadSettings for chamada
-      // (inclusive quando o realtime detectar mudança no admin)
+      // Aplica orientação — também é chamado pelo realtime ao mudar no admin
       applyOrientation(s.orientation);
 
       const { data: set } = await supabaseClient
@@ -624,13 +644,12 @@ async function sendPing() {
 window.addEventListener('online', () => { State.isOffline = false; updateConnectionStatus(); if (State.isRegistered) fetchPlaylist(false); });
 window.addEventListener('offline', () => { State.isOffline = true; updateConnectionStatus(); });
 
-// ==================== FUNÇÃO EXTRA: MANTER TELA LIGADA ====================
+// ==================== MANTER TELA LIGADA ====================
 async function requestWakeLock() {
   try {
     if ('wakeLock' in navigator) {
       let wakeLock = await navigator.wakeLock.request('screen');
-      console.log('💡 Tela mantida ligada (Wake Lock ativo)');
-
+      console.log('💡 Wake Lock ativo');
       document.addEventListener('visibilitychange', async () => {
         if (document.visibilityState === 'visible') {
           wakeLock = await navigator.wakeLock.request('screen');
@@ -638,8 +657,8 @@ async function requestWakeLock() {
       });
     }
   } catch (err) {
-    console.warn('⚠️ Wake Lock não suportado ou falhou:', err);
+    console.warn('⚠️ Wake Lock não suportado:', err);
   }
 }
 
-console.log('✅ Player.js V6.3 (Orientation Support) Loaded');
+console.log('✅ Player.js V6.4 (4 Orientations) Loaded');
