@@ -1,5 +1,6 @@
-/* ==================== PLAYER.JS (FINAL v6.2 - AUTO VIDEO DURATION) ====================
+/* ==================== PLAYER.JS (FINAL v6.3 - ORIENTATION SUPPORT) ====================
    - Feature: Vídeos tocam até o fim (ignoram tempo configurado).
+   - Feature: Suporte a orientação Portrait/Landscape via admin.
    - Fix Zumbis: Limpeza forçada do DOM.
    - Offline First: Cache automático e reprodução sem internet.
    - Status: Indicador de Wi-Fi.
@@ -40,7 +41,8 @@ const State = {
   currentIndex: -1,
   watchdogTimer: null,
   settings: {},
-  realtimeSubscription: null
+  realtimeSubscription: null,
+  orientation: 'landscape' // novo campo de estado
 };
 
 // ==================== 1. BOOTSTRAP ====================
@@ -100,26 +102,25 @@ async function checkAndStart() {
 }
 
 async function startPlayback() {
-  // CHAMA A FUNÇÃO AQUI:
-  requestWakeLock(); 
+  requestWakeLock();
 
   if (State.isPlaying) return;
   State.isPlaying = true;
-  
+
   showLoading('Iniciando...');
 
   try {
     await loadSettings();
-    await fetchPlaylist(true); 
+    await fetchPlaylist(true);
     setupRealtimeUpdates();
 
     if (!document.getElementById('loadingScreen').classList.contains('hidden')) {
-        if (State.playlist.length > 0) {
-            hideLoading();
-            playNext();
-        } else {
-            showLoading('Aguardando conteúdo...');
-        }
+      if (State.playlist.length > 0) {
+        hideLoading();
+        playNext();
+      } else {
+        showLoading('Aguardando conteúdo...');
+      }
     }
 
     setInterval(() => fetchPlaylist(false), CONFIG.CHECK_INTERVAL);
@@ -141,7 +142,7 @@ async function downloadAssets(items) {
     items.forEach(item => { if (item.url) urlsToCache.push(item.url); });
 
     const customBg = State.settings.weather_backgrounds || {};
-    Object.values(customBg).forEach(url => { if(url) urlsToCache.push(url); });
+    Object.values(customBg).forEach(url => { if (url) urlsToCache.push(url); });
     Object.values(WEATHER_BG.day).forEach(url => urlsToCache.push(url));
     Object.values(WEATHER_BG.night).forEach(url => urlsToCache.push(url));
 
@@ -154,8 +155,8 @@ async function downloadAssets(items) {
 
     await Promise.allSettled(promises);
     console.log('✅ Cache offline sincronizado');
-  } catch (err) { 
-    console.warn('Erro cache:', err); 
+  } catch (err) {
+    console.warn('Erro cache:', err);
   }
 }
 
@@ -167,7 +168,7 @@ function setupRealtimeUpdates() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'playlist_items' }, () => fetchPlaylist(false))
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'screens', filter: `device_id=eq.${State.deviceId}` }, () => {
       fetchPlaylist(false);
-      loadSettings();
+      loadSettings(); // Vai reaplicar orientação automaticamente ao detectar mudança
     })
     .subscribe();
 }
@@ -222,7 +223,7 @@ async function fetchPlaylist(isFirstLoad) {
         if (item.dynamic_contents) {
           const widget = item.dynamic_contents;
           let config = {};
-          try { config = typeof widget.configuration === 'string' ? JSON.parse(widget.configuration) : (widget.configuration || {}); } catch(e){}
+          try { config = typeof widget.configuration === 'string' ? JSON.parse(widget.configuration) : (widget.configuration || {}); } catch (e) { }
           const type = widget.content_type?.toLowerCase() || '';
 
           if (['ticker', 'text', 'news'].includes(type)) {
@@ -259,7 +260,7 @@ async function fetchPlaylist(isFirstLoad) {
         console.log(`📦 Playlist: ${newList.length} itens`);
         State.playlist = newList;
         localStorage.setItem('loopin_cached_playlist', JSON.stringify(newList));
-        downloadAssets(newList); 
+        downloadAssets(newList);
 
         if (isFirstLoad && !document.getElementById('loadingScreen').classList.contains('hidden')) {
           hideLoading();
@@ -286,9 +287,8 @@ async function playNext() {
 
   const activeSlot = document.querySelector('.media-slot.active');
   const nextSlot = activeSlot.id === 'slot1' ? document.getElementById('slot2') : document.getElementById('slot1');
-  
-  // Limpeza de segurança (evita zumbis antes de inserir)
-  nextSlot.innerHTML = ''; 
+
+  nextSlot.innerHTML = '';
 
   try {
     if (item.renderType === 'media') {
@@ -319,27 +319,20 @@ async function renderMedia(item, nextSlot, activeSlot) {
     video.muted = true;
     video.autoplay = true;
     video.playsInline = true;
-    
-    // --- MUDANÇA: Lógica de Reprodução Completa ---
-    // 1. Desliga o loop para que o evento 'ended' funcione
-    video.loop = false; 
-    
-    // 2. Quando acabar, chama o próximo
+    video.loop = false;
+
     video.onended = () => {
-        console.log('🎬 Vídeo finalizado, avançando...');
-        playNext();
+      console.log('🎬 Vídeo finalizado, avançando...');
+      playNext();
     };
 
     video.style.opacity = '0';
     video.oncanplay = () => doTransition(activeSlot, nextSlot, item, video);
-    
-    // Fallback de erro
     video.onerror = () => { console.error('Erro vídeo'); playNext(); };
-    
+
     nextSlot.appendChild(video);
 
   } else {
-    // IMAGEM
     const img = document.createElement('img');
     img.src = src;
     img.style.opacity = '0';
@@ -362,12 +355,11 @@ function renderTicker(item, nextSlot, activeSlot) {
 // ==================== WIDGET CLIMA (COM SUPORTE A VÍDEO) ====================
 async function renderWeather(item, nextSlot, activeSlot) {
   const city = item.city || 'São Paulo';
-  
+
   const wrapper = document.createElement('div');
   wrapper.className = 'weather-slide';
   wrapper.style.opacity = '0';
 
-  // Estrutura inicial (Overlay e Card ficam por cima)
   wrapper.innerHTML = `
     <div class="weather-overlay"></div>
     <div class="weather-card">
@@ -384,22 +376,18 @@ async function renderWeather(item, nextSlot, activeSlot) {
       </div>
     </div>
   `;
-  
+
   nextSlot.appendChild(wrapper);
   doTransition(activeSlot, nextSlot, item, null);
 
-  // Função interna para aplicar o fundo (Vídeo ou Imagem)
   const applyBackground = async (url) => {
-    // Verifica se é cache ou link direto
     const src = await getCachedUrl(url);
-    const isVideo = url.match(/\.(mp4|webm|mov)$/i); // Verifica extensão
+    const isVideo = url.match(/\.(mp4|webm|mov)$/i);
 
-    // Remove fundos anteriores se houver
     const oldVideo = wrapper.querySelector('.weather-bg-video');
     if (oldVideo) oldVideo.remove();
 
     if (isVideo) {
-      // É VÍDEO: Cria elemento
       const video = document.createElement('video');
       video.className = 'weather-bg-video';
       video.src = src;
@@ -407,18 +395,13 @@ async function renderWeather(item, nextSlot, activeSlot) {
       video.autoplay = true;
       video.loop = true;
       video.playsInline = true;
-      
-      // Insere como primeiro filho (atrás do overlay)
       wrapper.insertBefore(video, wrapper.firstChild);
-      wrapper.style.backgroundImage = 'none'; // Remove imagem
-      
+      wrapper.style.backgroundImage = 'none';
     } else {
-      // É IMAGEM: Usa CSS padrão
       wrapper.style.backgroundImage = `url('${src}')`;
     }
   };
 
-  // Preenche dados e define fundo
   const fillData = (data) => {
     const card = nextSlot.querySelector('.weather-card');
     if (!card || !data.main) return;
@@ -426,55 +409,50 @@ async function renderWeather(item, nextSlot, activeSlot) {
     const isNight = data.weather[0].icon.includes('n');
     const id = data.weather[0].id;
     const customBg = State.settings.weather_backgrounds || {};
-    
-    // Define URL padrão (Imagem)
+
     let bgUrl = isNight ? WEATHER_BG.night.default : WEATHER_BG.day.clear;
 
-    // Lógica de Prioridade (Customizado > Padrão)
     if (id >= 200 && id < 300) bgUrl = isNight ? (customBg.night_rain || WEATHER_BG.night.thunderstorm) : (customBg.day_storm || WEATHER_BG.day.thunderstorm);
     else if (id >= 300 && id < 600) bgUrl = isNight ? (customBg.night_rain || WEATHER_BG.night.rain) : (customBg.day_rain || WEATHER_BG.day.rain);
     else if (id >= 801) bgUrl = isNight ? (customBg.night_clear || WEATHER_BG.night.clouds) : (customBg.day_clouds || WEATHER_BG.day.clouds);
     else bgUrl = isNight ? (customBg.night_clear || WEATHER_BG.night.clear) : (customBg.day_clear || WEATHER_BG.day.clear);
-    
-    // Aplica o fundo (detecta se é vídeo/imagem dentro da função)
+
     applyBackground(bgUrl);
 
-    // Preenche textos
     card.querySelector('.weather-temp').innerText = Math.round(data.main.temp) + '°';
     card.querySelector('.weather-description').innerText = data.weather[0].description;
     card.querySelector('.hum').innerText = data.main.humidity + '%';
     card.querySelector('.wind').innerText = Math.round(data.wind.speed * 3.6) + ' km/h';
-    
+
     const icon = card.querySelector('.weather-icon-large');
     icon.src = `https://openweathermap.org/img/wn/${data.weather[0].icon}@4x.png`;
     icon.style.display = 'block';
   };
 
-  // Lógica de Cache/API (Mantida igual)
   const cacheKey = 'weather_last_data';
   if (State.settings?.api_weather_key && !State.isOffline) {
     const safeCity = encodeURIComponent(city.trim()) + ',BR';
     const url = `https://api.openweathermap.org/data/2.5/weather?q=${safeCity}&units=metric&lang=pt_br&appid=${State.settings.api_weather_key}`;
-    
+
     fetch(url).then(r => r.json()).then(data => {
-        if (data.main) { localStorage.setItem(cacheKey, JSON.stringify(data)); fillData(data); }
-      }).catch(() => { const c = localStorage.getItem(cacheKey); if(c) fillData(JSON.parse(c)); });
+      if (data.main) { localStorage.setItem(cacheKey, JSON.stringify(data)); fillData(data); }
+    }).catch(() => { const c = localStorage.getItem(cacheKey); if (c) fillData(JSON.parse(c)); });
   } else {
-    const c = localStorage.getItem(cacheKey); 
-    if(c) fillData(JSON.parse(c));
+    const c = localStorage.getItem(cacheKey);
+    if (c) fillData(JSON.parse(c));
     else {
-        wrapper.querySelector('.weather-description').innerText = "Sem dados offline";
-        // Fundo padrão se não tiver dados
-        applyBackground(WEATHER_BG.day.clear);
+      wrapper.querySelector('.weather-description').innerText = "Sem dados offline";
+      applyBackground(WEATHER_BG.day.clear);
     }
   }
 }
 
 function renderHTML(item, nextSlot, activeSlot) {
   const div = document.createElement('div');
-  div.style.width = '100%'; div.style.height = '100%';
+  div.style.width = '100%';
+  div.style.height = '100%';
   div.style.opacity = '0';
-  div.style.background = '#000'; // Fundo preto para cobrir vídeo
+  div.style.background = '#000';
   div.innerHTML = item.html;
   nextSlot.appendChild(div);
   doTransition(activeSlot, nextSlot, item, null);
@@ -486,38 +464,68 @@ function doTransition(curr, next, item, vid) {
   requestAnimationFrame(() => {
     next.classList.add('active');
     curr.classList.remove('active');
-    
-    // 1. Limpeza de Zumbis: Remove slide anterior do DOM após a transição
+
     setTimeout(() => {
-        curr.innerHTML = '';
-    }, CONFIG.FADE_TIME + 200); 
+      curr.innerHTML = '';
+    }, CONFIG.FADE_TIME + 200);
 
-    // 2. Lógica de Duração
     if (vid) {
-      // É VÍDEO:
-      // Toca o vídeo e NÃO AGENDA playNext (deixa o evento 'ended' cuidar disso)
       vid.style.opacity = 1;
-      vid.play().catch(() => playNext()); // Se falhar o play, pula
+      vid.play().catch(() => playNext());
       console.log(`🎬 Tocando vídeo (aguardando fim)...`);
-      
     } else {
-      // É IMAGEM/WIDGET:
-      // Faz o Fade-In
       const el = next.querySelector('.weather-slide, .ticker-slide, img, div');
-      if(el) { el.style.transition = 'opacity 0.5s ease-in-out'; el.style.opacity = 1; }
+      if (el) { el.style.transition = 'opacity 0.5s ease-in-out'; el.style.opacity = 1; }
 
-      // Agenda o próximo slide baseado no tempo configurado
       let duration = (item.duration || 10) * 1000;
-      console.log(`⏱️ Próximo slide em ${duration/1000}s`);
+      console.log(`⏱️ Próximo slide em ${duration / 1000}s`);
       setTimeout(playNext, duration);
     }
   });
 }
 
-// ==================== 8. UTILS ====================
+// ==================== 8. ORIENTAÇÃO DA TELA ====================
+
+/**
+ * Aplica rotação CSS para modo portrait (vertical).
+ * Usamos transform porque a API screen.orientation.lock()
+ * não é confiável em TVs e webviews.
+ */
+function applyOrientation(orientation) {
+  if (orientation === 'portrait') {
+    // Rotaciona o body 90 graus e ajusta dimensões para preencher a tela
+    document.body.style.transform = 'rotate(90deg)';
+    document.body.style.transformOrigin = 'center center';
+    document.body.style.width = '100vh';
+    document.body.style.height = '100vw';
+    document.body.style.position = 'fixed';
+    document.body.style.top = '50%';
+    document.body.style.left = '50%';
+    document.body.style.marginTop = '-50vw';
+    document.body.style.marginLeft = '-50vh';
+    document.body.style.overflow = 'hidden';
+    console.log('📱 Modo Portrait ativado');
+  } else {
+    // Landscape: remove qualquer rotação aplicada
+    document.body.style.transform = '';
+    document.body.style.transformOrigin = '';
+    document.body.style.width = '';
+    document.body.style.height = '';
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.left = '';
+    document.body.style.marginTop = '';
+    document.body.style.marginLeft = '';
+    document.body.style.overflow = '';
+    console.log('🖥️ Modo Landscape ativado');
+  }
+  State.orientation = orientation || 'landscape';
+}
+
+// ==================== 9. UTILS ====================
 
 async function getCachedUrl(url) {
-  if(!url) return null;
+  if (!url) return null;
   try {
     const cache = await caches.open(CONFIG.CACHE_NAME);
     const resp = await cache.match(url);
@@ -528,18 +536,35 @@ async function getCachedUrl(url) {
 
 async function loadSettings() {
   try {
-    const { data: s } = await supabaseClient.from('screens').select('user_id').eq('device_id', State.deviceId).maybeSingle();
+    // Busca user_id E orientation da tela em uma única query
+    const { data: s } = await supabaseClient
+      .from('screens')
+      .select('user_id, orientation')
+      .eq('device_id', State.deviceId)
+      .maybeSingle();
+
     if (s) {
-      const { data: set } = await supabaseClient.from('settings').select('*').eq('user_id', s.user_id).maybeSingle();
+      // Aplica orientação sempre que loadSettings for chamada
+      // (inclusive quando o realtime detectar mudança no admin)
+      applyOrientation(s.orientation);
+
+      const { data: set } = await supabaseClient
+        .from('settings')
+        .select('*')
+        .eq('user_id', s.user_id)
+        .maybeSingle();
+
       if (set) {
         State.settings = set;
         if (set.organization_logo_url) {
           const img = document.getElementById('orgLogo');
-          if(img) { img.src = set.organization_logo_url; img.classList.remove('hidden'); }
+          if (img) { img.src = set.organization_logo_url; img.classList.remove('hidden'); }
         }
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Erro ao carregar settings:', e);
+  }
 }
 
 function resetWatchdog() {
@@ -558,8 +583,8 @@ function startClock() {
   }
   setInterval(() => {
     const n = new Date();
-    document.getElementById('clockTime').innerText = n.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-    document.getElementById('clockDate').innerText = n.toLocaleDateString('pt-BR', {day:'2-digit', month:'short'}).replace('.','');
+    document.getElementById('clockTime').innerText = n.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('clockDate').innerText = n.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '');
   }, 1000);
 }
 
@@ -570,16 +595,33 @@ function updateConnectionStatus() {
   else el.classList.remove('visible');
 }
 
-function showLoading(t) { document.getElementById('loadingText').innerText = t; document.getElementById('loadingScreen').classList.remove('hidden'); document.getElementById('playerContainer').classList.add('hidden'); }
-function hideLoading() { document.getElementById('loadingScreen').classList.add('hidden'); document.getElementById('playerContainer').classList.remove('hidden'); }
-function setupMouseHider() {
-  let t; window.addEventListener('mousemove', () => { document.body.classList.add('mouse-visible'); clearTimeout(t); t = setTimeout(() => document.body.classList.remove('mouse-visible'), 2000); });
-}
-async function sendPing() {
-  if (State.isRegistered && !State.isOffline) supabaseClient.from('screens').update({ last_ping: new Date(), status: 'online' }).eq('device_id', State.deviceId).then();
+function showLoading(t) {
+  document.getElementById('loadingText').innerText = t;
+  document.getElementById('loadingScreen').classList.remove('hidden');
+  document.getElementById('playerContainer').classList.add('hidden');
 }
 
-window.addEventListener('online', () => { State.isOffline = false; updateConnectionStatus(); if(State.isRegistered) fetchPlaylist(false); });
+function hideLoading() {
+  document.getElementById('loadingScreen').classList.add('hidden');
+  document.getElementById('playerContainer').classList.remove('hidden');
+}
+
+function setupMouseHider() {
+  let t;
+  window.addEventListener('mousemove', () => {
+    document.body.classList.add('mouse-visible');
+    clearTimeout(t);
+    t = setTimeout(() => document.body.classList.remove('mouse-visible'), 2000);
+  });
+}
+
+async function sendPing() {
+  if (State.isRegistered && !State.isOffline) {
+    supabaseClient.from('screens').update({ last_ping: new Date(), status: 'online' }).eq('device_id', State.deviceId).then();
+  }
+}
+
+window.addEventListener('online', () => { State.isOffline = false; updateConnectionStatus(); if (State.isRegistered) fetchPlaylist(false); });
 window.addEventListener('offline', () => { State.isOffline = true; updateConnectionStatus(); });
 
 // ==================== FUNÇÃO EXTRA: MANTER TELA LIGADA ====================
@@ -588,8 +630,7 @@ async function requestWakeLock() {
     if ('wakeLock' in navigator) {
       let wakeLock = await navigator.wakeLock.request('screen');
       console.log('💡 Tela mantida ligada (Wake Lock ativo)');
-      
-      // Se a tela minimizar e voltar, pede de novo
+
       document.addEventListener('visibilitychange', async () => {
         if (document.visibilityState === 'visible') {
           wakeLock = await navigator.wakeLock.request('screen');
@@ -601,4 +642,4 @@ async function requestWakeLock() {
   }
 }
 
-console.log('✅ Player.js V6.2 (Auto Duration) Loaded');
+console.log('✅ Player.js V6.3 (Orientation Support) Loaded');
