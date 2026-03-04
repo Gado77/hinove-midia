@@ -1,17 +1,21 @@
-/* ==================== PLAYER.JS (FINAL v6.4 - 4 ORIENTATIONS) ====================
+/* ==================== PLAYER.JS (FINAL v6.5 - PERFORMANCE) ====================
    - Feature: 4 orientações: landscape, portrait, landscape-flipped, portrait-flipped.
    - Feature: Vídeos tocam até o fim (ignoram tempo configurado).
    - Fix Zumbis: Limpeza forçada do DOM.
    - Offline First: Cache automático e reprodução sem internet.
    - Status: Indicador de Wi-Fi.
+   - Perf: getCachedUrl serve URL direta quando online (sem blob na RAM).
+   - Perf: Watchdog 90s (TV Box lento não fica reiniciando em loop).
+   - Perf: CHECK e PING defasados em 15s (não disparam juntos).
 */
 
 const CONFIG = {
   POLL_INTERVAL: 10000,      // 10s: Intervalo de pareamento
   CHECK_INTERVAL: 60000,     // 1 min: Verifica playlist
   PING_INTERVAL: 30000,      // 30s: Ping online
-  WATCHDOG_TIMEOUT: 45000,   // 45s: Reinicia se travar (Resetado a cada slide)
-  CACHE_NAME: 'loopin-v21',  // Cache atualizado
+  PING_DELAY: 15000,         // 15s: Defasa o PING em relação ao CHECK
+  WATCHDOG_TIMEOUT: 90000,   // 90s: Reinicia se travar — aumentado para TV Box lento
+  CACHE_NAME: 'loopin-v21',
   FADE_TIME: 800             // Tempo da transição visual (ms)
 };
 
@@ -122,7 +126,8 @@ async function startPlayback() {
     }
 
     setInterval(() => fetchPlaylist(false), CONFIG.CHECK_INTERVAL);
-    setInterval(sendPing, CONFIG.PING_INTERVAL);
+    // PING defasado 15s em relação ao CHECK para não sobrecarregar juntos
+    setTimeout(() => setInterval(sendPing, CONFIG.PING_INTERVAL), CONFIG.PING_DELAY);
 
   } catch (err) {
     console.error('Fatal Error:', err);
@@ -545,14 +550,27 @@ function applyOrientation(orientation) {
 }
 
 // ==================== 9. UTILS ====================
+/*
+  getCachedUrl — estratégia por estado de conexão:
+  - ONLINE:  serve a URL pública diretamente. Não cria blob na RAM.
+             O browser faz cache HTTP normalmente. TV Box agradece.
+  - OFFLINE: busca no Cache API e converte para blob: URL local.
+             Sem internet, é a única forma de exibir o arquivo.
+*/
 async function getCachedUrl(url) {
   if (!url) return null;
+
+  // Online → URL direta, zero blob na memória
+  if (!State.isOffline) return url;
+
+  // Offline → tenta servir do cache local
   try {
     const cache = await caches.open(CONFIG.CACHE_NAME);
-    const resp = await cache.match(url);
+    const resp  = await cache.match(url);
     if (resp) return URL.createObjectURL(await resp.blob());
-    return url;
-  } catch (err) { return url; }
+  } catch (err) { /* sem cache, cai na URL original */ }
+
+  return url;
 }
 
 async function loadSettings() {
@@ -661,4 +679,4 @@ async function requestWakeLock() {
   }
 }
 
-console.log('✅ Player.js V6.4 (4 Orientations) Loaded');
+console.log('✅ Player.js V6.5 (Performance) Loaded');
