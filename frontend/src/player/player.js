@@ -1,4 +1,4 @@
-/* ==================== PLAYER.JS (FINAL v6.6 - MEMORY) ====================
+/* ==================== PLAYER.JS (FINAL v6.7 - CACHE LIMIT) ====================
    - Feature: 4 orientações: landscape, portrait, landscape-flipped, portrait-flipped.
    - Feature: Vídeos tocam até o fim (ignoram tempo configurado).
    - Fix Zumbis: Limpeza forçada do DOM.
@@ -9,6 +9,7 @@
    - Perf: CHECK e PING defasados em 15s (não disparam juntos).
    - Perf: Revoke de blob URLs ao limpar slot — sem vazamento de memória.
    - Perf: purgeSlot() pausa e descarrega vídeo antes de limpar DOM.
+   - Perf: Cache limitado a 500MB — remove arquivos mais antigos automaticamente.
 */
 
 const CONFIG = {
@@ -18,6 +19,7 @@ const CONFIG = {
   PING_DELAY: 15000,         // 15s: Defasa o PING em relação ao CHECK
   WATCHDOG_TIMEOUT: 90000,   // 90s: Reinicia se travar — aumentado para TV Box lento
   CACHE_NAME: 'loopin-v21',
+  CACHE_LIMIT_MB: 500,       // 500MB: Limite máximo de cache no dispositivo (~30 vídeos de 10s)
   FADE_TIME: 800             // Tempo da transição visual (ms)
 };
 
@@ -138,6 +140,67 @@ async function startPlayback() {
 }
 
 // ==================== 3. DOWNLOAD & CACHE ====================
+/*
+  Estratégia de cache com limite de tamanho:
+
+  1. Monta lista de URLs a baixar (playlist + backgrounds do clima)
+  2. Antes de baixar, chama enforceCacheLimit() que:
+     - Soma o tamanho de todas as entradas já em cache via cache.keys() + resp.blob()
+     - Se ultrapassar CACHE_LIMIT_MB (150MB), deleta as entradas mais antigas
+       até o cache caber — funciona como uma fila FIFO
+  3. Baixa apenas o que ainda não está em cache
+
+  Por que 150MB?
+    TV Box de entrada tem ~8GB de storage mas o browser limita o Cache API
+    a uma fração disso. 150MB é seguro para playlists com 10-20 imagens HD
+    comprimidas + backgrounds de clima, sem risco de estouro.
+*/
+async function enforceCacheLimit(cache) {
+  try {
+    const limitBytes = CONFIG.CACHE_LIMIT_MB * 1024 * 1024;
+    const keys = await cache.keys();
+
+    // Coleta tamanho e URL de cada entrada
+    const entries = [];
+    for (const req of keys) {
+      try {
+        const resp = await cache.match(req);
+        if (resp) {
+          const blob = await resp.blob();
+          entries.push({ url: req.url, size: blob.size });
+        }
+      } catch (e) { /* ignora entrada corrompida */ }
+    }
+
+    // Calcula uso total
+    const totalBytes = entries.reduce((acc, e) => acc + e.size, 0);
+    const totalMB = (totalBytes / 1024 / 1024).toFixed(1);
+    console.log(`💾 Cache atual: ${totalMB}MB / ${CONFIG.CACHE_LIMIT_MB}MB`);
+
+    if (totalBytes <= limitBytes) return; // dentro do limite, nada a fazer
+
+    // Remove do mais antigo (primeiro da lista = mais antigo no Cache API)
+    // até caber dentro do limite
+    let freed = 0;
+    const toDelete = [];
+    for (const entry of entries) {
+      toDelete.push(entry.url);
+      freed += entry.size;
+      if (totalBytes - freed <= limitBytes) break;
+    }
+
+    for (const url of toDelete) {
+      await cache.delete(url);
+      console.log(`🗑️ Cache: removido ${url.split('/').pop()} (limite atingido)`);
+    }
+
+    const freedMB = (freed / 1024 / 1024).toFixed(1);
+    console.log(`✅ Cache: ${freedMB}MB liberados`);
+  } catch (err) {
+    console.warn('Erro ao verificar limite de cache:', err);
+  }
+}
+
 async function downloadAssets(items) {
   if (!items || items.length === 0) return;
   try {
@@ -150,6 +213,9 @@ async function downloadAssets(items) {
     Object.values(customBg).forEach(url => { if (url) urlsToCache.push(url); });
     Object.values(WEATHER_BG.day).forEach(url => urlsToCache.push(url));
     Object.values(WEATHER_BG.night).forEach(url => urlsToCache.push(url));
+
+    // Garante que o cache não ultrapasse o limite antes de baixar mais
+    await enforceCacheLimit(cache);
 
     const promises = urlsToCache.map(async (url) => {
       try {
@@ -726,4 +792,4 @@ async function requestWakeLock() {
   }
 }
 
-console.log('✅ Player.js V6.6 (Memory) Loaded');
+console.log('✅ Player.js V6.7 (Cache Limit) Loaded');
