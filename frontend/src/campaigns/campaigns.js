@@ -1,6 +1,7 @@
 /* ==================== CAMPAIGNS.JS ====================
    Gerenciamento completo de Campanhas
    Bucket de Upload: 'medias'
+   v2 - Compressão de imagem via canvas antes do upload
 */
 
 let currentUser = null
@@ -127,8 +128,65 @@ function renderThumbnail(campaign) {
     return `<div style="width:40px;height:40px;background:#000;border-radius:4px;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;">▶️</div>`
   }
   
-  // Adiciona timestamp para evitar cache antigo se a URL for a mesma
   return `<img src="${campaign.media_url}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;" onerror="this.src='https://via.placeholder.com/40'"/>`
+}
+
+// === COMPRESSÃO DE IMAGEM ===
+/*
+  Reduz imagens para no máximo 1280x720 (HD) antes do upload.
+  - TV Box renderiza muito mais fácil arquivos menores
+  - Qualidade JPEG: 0.82 (visualmente imperceptível, ~60-80% menor)
+  - Vídeos são passados sem alteração
+  - Retorna um novo File com o mesmo nome, pronto pro upload
+*/
+function compressImage(file, maxWidth = 1280, maxHeight = 720, quality = 0.82) {
+  return new Promise((resolve) => {
+    // Não é imagem? Devolve como veio
+    if (!file.type.startsWith('image/')) {
+      resolve(file)
+      return
+    }
+
+    const reader = new FileReader()
+    reader.readAsDataURL(file)
+
+    reader.onload = (e) => {
+      const img = new Image()
+      img.src = e.target.result
+
+      img.onload = () => {
+        // Calcula proporção para não distorcer
+        let { width, height } = img
+
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height)
+          width  = Math.round(width * ratio)
+          height = Math.round(height * ratio)
+        }
+
+        // Desenha no canvas no novo tamanho
+        const canvas = document.createElement('canvas')
+        canvas.width  = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0, width, height)
+
+        // Exporta como JPEG comprimido (PNG vira JPEG aqui também — menor tamanho)
+        canvas.toBlob((blob) => {
+          const compressed = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), {
+            type: 'image/jpeg',
+            lastModified: Date.now()
+          })
+
+          const before = (file.size / 1024).toFixed(0)
+          const after  = (compressed.size / 1024).toFixed(0)
+          console.log(`🗜️ Compressão: ${before}KB → ${after}KB (${width}x${height})`)
+
+          resolve(compressed)
+        }, 'image/jpeg', quality)
+      }
+    }
+  })
 }
 
 // === LÓGICA DE CRIAÇÃO (UPLOAD) ===
@@ -136,40 +194,41 @@ function renderThumbnail(campaign) {
 async function handleCreateCampaign(e) {
   e.preventDefault()
 
-  const btn = document.querySelector('#formNewCampaign button[type="submit"]')
   const fileInput = document.getElementById('campaignMedia')
   const file = fileInput.files[0]
 
-  // Validação básica
   if (!file) {
     showNotification('Selecione uma imagem ou vídeo', 'warning')
     return
   }
 
-  setLoading('#formNewCampaign button[type="submit"]', true, 'Enviando arquivo...')
+  setLoading('#formNewCampaign button[type="submit"]', true, 'Comprimindo...')
 
   try {
-    // 1. Preparar Upload
-    const fileExt = file.name.split('.').pop()
+    // 1. Comprimir imagem antes do upload (vídeos passam direto)
+    const fileToUpload = await compressImage(file)
+
+    setLoading('#formNewCampaign button[type="submit"]', true, 'Enviando arquivo...')
+
+    // 2. Preparar path no storage
+    const fileExt = fileToUpload.name.split('.').pop()
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
     const filePath = `${currentUser.id}/${fileName}`
 
-    // 2. Fazer Upload para o bucket 'medias'
-    // AQUI ESTAVA O ERRO ANTES, AGORA ESTÁ CORRIGIDO PARA 'medias'
-    const { url, error: uploadError } = await apiUploadFile('medias', filePath, file)
-    
+    // 3. Upload para o bucket 'medias'
+    const { url, error: uploadError } = await apiUploadFile('medias', filePath, fileToUpload)
     if (uploadError) throw new Error('Erro no upload: ' + uploadError.message)
 
-    console.log('✅ Arquivo enviado. URL:', url);
+    console.log('✅ Arquivo enviado. URL:', url)
 
-    // 3. Determinar tipo de mídia
+    // 4. Tipo de mídia
     const mediaType = file.type.startsWith('video/') ? 'video' : 'image'
 
-    // 4. Salvar no Banco
-    const advertiser_id = document.getElementById('campaignAdvertiser').value
-    const priority = document.getElementById('campaignPriority').value
-    const start_date = document.getElementById('campaignStartDate').value
-    const end_date = document.getElementById('campaignEndDate').value
+    // 5. Salvar no banco
+    const advertiser_id    = document.getElementById('campaignAdvertiser').value
+    const priority         = document.getElementById('campaignPriority').value
+    const start_date       = document.getElementById('campaignStartDate').value
+    const end_date         = document.getElementById('campaignEndDate').value
     const duration_seconds = parseInt(document.getElementById('campaignDuration').value)
 
     const { error: dbError } = await apiInsert('campaigns', {
@@ -180,14 +239,14 @@ async function handleCreateCampaign(e) {
       duration_seconds,
       status: 'active',
       name: `Campanha ${new Date().toLocaleDateString()} - ${file.name}`,
-      media_url: url, // Salva a URL pública gerada
+      media_url: url,
       media_type: mediaType,
-      file_path: filePath // Salva o caminho para poder deletar depois
+      file_path: filePath
     }, currentUser.id)
 
     if (dbError) throw dbError
 
-    // 5. Sucesso
+    // 6. Sucesso
     document.getElementById('modalNewCampaign').classList.remove('active')
     document.getElementById('formNewCampaign').reset()
     loadCampaigns()
@@ -226,11 +285,11 @@ async function handleEditCampaign(e) {
   
   const id = document.getElementById('editCampaignId').value
   const updates = {
-    advertiser_id: document.getElementById('editCampaignAdvertiser').value,
-    status: document.getElementById('editCampaignStatus').value,
-    priority: document.getElementById('editCampaignPriority').value,
-    start_date: document.getElementById('editCampaignStartDate').value,
-    end_date: document.getElementById('editCampaignEndDate').value,
+    advertiser_id:    document.getElementById('editCampaignAdvertiser').value,
+    status:           document.getElementById('editCampaignStatus').value,
+    priority:         document.getElementById('editCampaignPriority').value,
+    start_date:       document.getElementById('editCampaignStartDate').value,
+    end_date:         document.getElementById('editCampaignEndDate').value,
     duration_seconds: parseInt(document.getElementById('editCampaignDuration').value)
   }
   
@@ -251,7 +310,6 @@ async function handleEditCampaign(e) {
 async function deleteCampaign(id) {
   if (!confirm('Excluir esta campanha?')) return
   try {
-    // Idealmente, deletaríamos o arquivo do storage aqui também
     await apiDelete('campaigns', id)
     loadCampaigns()
     showNotification('Excluído!', 'success')
@@ -282,7 +340,7 @@ function setupEventListeners() {
   document.getElementById('formNewCampaign').addEventListener('submit', handleCreateCampaign)
   document.getElementById('formEditCampaign').addEventListener('submit', handleEditCampaign)
   
-  const searchInput = document.getElementById('searchInput')
+  const searchInput  = document.getElementById('searchInput')
   const statusFilter = document.getElementById('statusFilter')
   
   searchInput.addEventListener('input', (e) => {
