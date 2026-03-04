@@ -1,4 +1,4 @@
-/* ==================== PLAYER.JS (FINAL v6.5 - PERFORMANCE) ====================
+/* ==================== PLAYER.JS (FINAL v6.6 - MEMORY) ====================
    - Feature: 4 orientações: landscape, portrait, landscape-flipped, portrait-flipped.
    - Feature: Vídeos tocam até o fim (ignoram tempo configurado).
    - Fix Zumbis: Limpeza forçada do DOM.
@@ -7,6 +7,8 @@
    - Perf: getCachedUrl serve URL direta quando online (sem blob na RAM).
    - Perf: Watchdog 90s (TV Box lento não fica reiniciando em loop).
    - Perf: CHECK e PING defasados em 15s (não disparam juntos).
+   - Perf: Revoke de blob URLs ao limpar slot — sem vazamento de memória.
+   - Perf: purgeSlot() pausa e descarrega vídeo antes de limpar DOM.
 */
 
 const CONFIG = {
@@ -289,7 +291,7 @@ async function playNext() {
   const activeSlot = document.querySelector('.media-slot.active');
   const nextSlot = activeSlot.id === 'slot1' ? document.getElementById('slot2') : document.getElementById('slot1');
 
-  nextSlot.innerHTML = '';
+  purgeSlot(nextSlot);
 
   try {
     if (item.renderType === 'media') {
@@ -463,7 +465,7 @@ function doTransition(curr, next, item, vid) {
     next.classList.add('active');
     curr.classList.remove('active');
 
-    setTimeout(() => { curr.innerHTML = ''; }, CONFIG.FADE_TIME + 200);
+    setTimeout(() => { purgeSlot(curr); }, CONFIG.FADE_TIME + 200);
 
     if (vid) {
       vid.style.opacity = 1;
@@ -550,6 +552,51 @@ function applyOrientation(orientation) {
 }
 
 // ==================== 9. UTILS ====================
+/*
+  purgeSlot(slot) — limpa um slot de mídia sem vazar memória.
+
+  O problema:
+    innerHTML = '' remove o elemento do DOM mas NÃO libera o blob: URL
+    que foi passado como src do <video> ou <img>. O browser mantém o
+    objeto na memória até um revokeObjectURL explícito. Em 8h de exibição
+    com vídeos isso acumula centenas de MB e derruba o TV Box.
+
+  A solução:
+    1. Acha todos os <video> e <img> no slot
+    2. Para o vídeo corretamente (pause + src = '' + load())
+    3. Revoga o blob: URL se existir
+    4. Só então limpa o DOM com innerHTML = ''
+*/
+function purgeSlot(slot) {
+  // Pausa e descarrega todos os vídeos do slot
+  slot.querySelectorAll('video').forEach(vid => {
+    try {
+      vid.pause();
+      const blobSrc = vid.src;
+      vid.removeAttribute('src');
+      vid.load(); // força o browser a liberar o buffer de vídeo
+      if (blobSrc && blobSrc.startsWith('blob:')) {
+        URL.revokeObjectURL(blobSrc);
+        console.log('🗑️ Blob vídeo revogado');
+      }
+    } catch (e) { /* seguro ignorar */ }
+  });
+
+  // Revoga blobs de imagens
+  slot.querySelectorAll('img').forEach(img => {
+    try {
+      const blobSrc = img.src;
+      if (blobSrc && blobSrc.startsWith('blob:')) {
+        URL.revokeObjectURL(blobSrc);
+        console.log('🗑️ Blob imagem revogado');
+      }
+    } catch (e) { /* seguro ignorar */ }
+  });
+
+  // Agora sim limpa o DOM
+  slot.innerHTML = '';
+}
+
 /*
   getCachedUrl — estratégia por estado de conexão:
   - ONLINE:  serve a URL pública diretamente. Não cria blob na RAM.
@@ -679,4 +726,4 @@ async function requestWakeLock() {
   }
 }
 
-console.log('✅ Player.js V6.5 (Performance) Loaded');
+console.log('✅ Player.js V6.6 (Memory) Loaded');
