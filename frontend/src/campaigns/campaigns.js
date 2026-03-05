@@ -1,7 +1,7 @@
 /* ==================== CAMPAIGNS.JS ====================
    Gerenciamento completo de Campanhas
    Bucket de Upload: 'medias'
-   v2 - Compressão de imagem via canvas antes do upload
+   v3 - Upload em massa (múltiplos arquivos com preview e progresso)
 */
 
 let currentUser = null
@@ -35,21 +35,23 @@ async function loadAdvertisersForSelect() {
       select: 'id, name',
       order: { field: 'name', ascending: true }
     })
-    
+
     if (error) throw error
-    
+
     const options = advertisers && advertisers.length > 0
-      ? '<option value="">Selecione um anunciante...</option>' + 
+      ? '<option value="">Selecione um anunciante...</option>' +
         advertisers.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')
       : '<option value="">Nenhum anunciante cadastrado</option>'
-    
+
     const createSelect = document.getElementById('campaignAdvertiser')
     const editSelect = document.getElementById('editCampaignAdvertiser')
-    
+    const bulkSelect = document.getElementById('bulkAdvertiser')
+
     if (createSelect) createSelect.innerHTML = options
     if (editSelect) editSelect.innerHTML = options
-  } catch (error) { 
-    console.error('Erro ao carregar anunciantes:', error) 
+    if (bulkSelect) bulkSelect.innerHTML = options
+  } catch (error) {
+    console.error('Erro ao carregar anunciantes:', error)
   }
 }
 
@@ -82,7 +84,7 @@ async function loadCampaigns(searchTerm = '', statusFilter = 'all') {
 
 function renderCampaignsTable(campaigns) {
   const tbody = document.getElementById('campaignsList')
-  
+
   if (!campaigns || campaigns.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #718096;">Nenhuma campanha encontrada</td></tr>'
     return
@@ -121,67 +123,41 @@ function renderCampaignsTable(campaigns) {
 
 function renderThumbnail(campaign) {
   if (!campaign.media_url) {
-    return '<div style="width:40px;height:40px;background:#eee;border-radius:4px;"></div>';
+    return '<div style="width:40px;height:40px;background:#eee;border-radius:4px;"></div>'
   }
-  
   if (campaign.media_type === 'video') {
     return `<div style="width:40px;height:40px;background:#000;border-radius:4px;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;">▶️</div>`
   }
-  
   return `<img src="${campaign.media_url}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;" onerror="this.src='https://via.placeholder.com/40'"/>`
 }
 
 // === COMPRESSÃO DE IMAGEM ===
-/*
-  Reduz imagens para no máximo 1280x720 (HD) antes do upload.
-  - TV Box renderiza muito mais fácil arquivos menores
-  - Qualidade JPEG: 0.82 (visualmente imperceptível, ~60-80% menor)
-  - Vídeos são passados sem alteração
-  - Retorna um novo File com o mesmo nome, pronto pro upload
-*/
 function compressImage(file, maxWidth = 1280, maxHeight = 720, quality = 0.82) {
   return new Promise((resolve) => {
-    // Não é imagem? Devolve como veio
-    if (!file.type.startsWith('image/')) {
-      resolve(file)
-      return
-    }
+    if (!file.type.startsWith('image/')) { resolve(file); return }
 
     const reader = new FileReader()
     reader.readAsDataURL(file)
-
     reader.onload = (e) => {
       const img = new Image()
       img.src = e.target.result
-
       img.onload = () => {
-        // Calcula proporção para não distorcer
         let { width, height } = img
-
         if (width > maxWidth || height > maxHeight) {
           const ratio = Math.min(maxWidth / width, maxHeight / height)
           width  = Math.round(width * ratio)
           height = Math.round(height * ratio)
         }
-
-        // Desenha no canvas no novo tamanho
         const canvas = document.createElement('canvas')
-        canvas.width  = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')
-        ctx.drawImage(img, 0, 0, width, height)
-
-        // Exporta como JPEG comprimido (PNG vira JPEG aqui também — menor tamanho)
+        canvas.width = width; canvas.height = height
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height)
         canvas.toBlob((blob) => {
           const compressed = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), {
-            type: 'image/jpeg',
-            lastModified: Date.now()
+            type: 'image/jpeg', lastModified: Date.now()
           })
-
           const before = (file.size / 1024).toFixed(0)
           const after  = (compressed.size / 1024).toFixed(0)
           console.log(`🗜️ Compressão: ${before}KB → ${after}KB (${width}x${height})`)
-
           resolve(compressed)
         }, 'image/jpeg', quality)
       }
@@ -189,7 +165,346 @@ function compressImage(file, maxWidth = 1280, maxHeight = 720, quality = 0.82) {
   })
 }
 
-// === LÓGICA DE CRIAÇÃO (UPLOAD) ===
+// ============================================================
+// === UPLOAD EM MASSA ========================================
+// ============================================================
+
+// Estado do bulk upload
+const BulkState = {
+  files: [],        // Array de { file, id, status, error }
+  isRunning: false
+}
+
+// Abre o modal de upload em massa
+function openBulkModal() {
+  BulkState.files = []
+  BulkState.isRunning = false
+  renderBulkFileList()
+  updateBulkSummary()
+  document.getElementById('modalBulkUpload').classList.add('active')
+}
+
+function closeBulkModal() {
+  if (BulkState.isRunning) {
+    if (!confirm('Upload em andamento. Deseja realmente cancelar?')) return
+    BulkState.isRunning = false
+  }
+  document.getElementById('modalBulkUpload').classList.remove('active')
+}
+
+// Quando o usuário seleciona arquivos pela input
+function onBulkFilesSelected(input) {
+  const newFiles = Array.from(input.files)
+
+  newFiles.forEach(file => {
+    // Evita duplicatas pelo nome+tamanho
+    const alreadyAdded = BulkState.files.some(
+      f => f.file.name === file.name && f.file.size === file.size
+    )
+    if (!alreadyAdded) {
+      BulkState.files.push({
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        file,
+        status: 'pending',   // pending | compressing | uploading | done | error
+        progress: 0,
+        error: null,
+        previewUrl: null
+      })
+    }
+  })
+
+  // Reseta o input para permitir selecionar os mesmos arquivos de novo
+  input.value = ''
+
+  generatePreviews()
+  renderBulkFileList()
+  updateBulkSummary()
+}
+
+// Suporte a drag & drop na área do modal
+function setupBulkDragDrop() {
+  const zone = document.getElementById('bulkDropZone')
+  if (!zone) return
+
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault()
+    zone.classList.add('dragover')
+  })
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'))
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault()
+    zone.classList.remove('dragover')
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.type.startsWith('image/') || f.type.startsWith('video/')
+    )
+    files.forEach(file => {
+      const alreadyAdded = BulkState.files.some(
+        f => f.file.name === file.name && f.file.size === file.size
+      )
+      if (!alreadyAdded) {
+        BulkState.files.push({
+          id: `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          file,
+          status: 'pending',
+          progress: 0,
+          error: null,
+          previewUrl: null
+        })
+      }
+    })
+    generatePreviews()
+    renderBulkFileList()
+    updateBulkSummary()
+  })
+}
+
+// Gera previews para imagens (vídeos mostram ícone)
+function generatePreviews() {
+  BulkState.files.forEach(entry => {
+    if (entry.previewUrl) return
+    if (entry.file.type.startsWith('image/')) {
+      entry.previewUrl = URL.createObjectURL(entry.file)
+    }
+  })
+}
+
+// Remove um arquivo da fila
+function removeBulkFile(id) {
+  const idx = BulkState.files.findIndex(f => f.id === id)
+  if (idx === -1) return
+  const entry = BulkState.files[idx]
+  if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl)
+  BulkState.files.splice(idx, 1)
+  renderBulkFileList()
+  updateBulkSummary()
+}
+
+// Renderiza a lista de arquivos com preview e barra de progresso
+function renderBulkFileList() {
+  const container = document.getElementById('bulkFileList')
+  if (!container) return
+
+  if (BulkState.files.length === 0) {
+    container.innerHTML = `
+      <div style="text-align:center;padding:32px;color:#718096;font-size:14px;">
+        Nenhum arquivo selecionado ainda.<br>
+        Use o botão acima ou arraste arquivos aqui.
+      </div>`
+    return
+  }
+
+  container.innerHTML = BulkState.files.map(entry => {
+    const isVideo = entry.file.type.startsWith('video/')
+    const sizeMB  = (entry.file.size / 1024 / 1024).toFixed(1)
+
+    const preview = isVideo
+      ? `<div style="width:56px;height:56px;background:#1A202C;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">🎬</div>`
+      : `<img src="${entry.previewUrl || ''}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0;" />`
+
+    const statusIcon = {
+      pending:     '⏳',
+      compressing: '🗜️',
+      uploading:   '⬆️',
+      done:        '✅',
+      error:       '❌'
+    }[entry.status] || '⏳'
+
+    const statusColor = {
+      pending:     '#718096',
+      compressing: '#D69E2E',
+      uploading:   '#4299E1',
+      done:        '#48BB78',
+      error:       '#FC8181'
+    }[entry.status] || '#718096'
+
+    const progressBar = entry.status === 'uploading'
+      ? `<div style="height:4px;background:#E2E8F0;border-radius:2px;margin-top:6px;overflow:hidden;">
+           <div style="height:100%;width:${entry.progress}%;background:#4299E1;transition:width 0.3s;border-radius:2px;"></div>
+         </div>`
+      : entry.status === 'done'
+        ? `<div style="height:4px;background:#48BB78;border-radius:2px;margin-top:6px;"></div>`
+        : ''
+
+    const canRemove = !BulkState.isRunning || entry.status === 'done' || entry.status === 'error'
+
+    return `
+      <div id="bulk-item-${entry.id}" style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;background:#F7FAFC;border:1px solid #E2E8F0;margin-bottom:8px;">
+        ${preview}
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <span style="font-size:13px;font-weight:600;color:#2D3748;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;" title="${escapeHtml(entry.file.name)}">
+              ${escapeHtml(entry.file.name)}
+            </span>
+            <span style="font-size:11px;color:${statusColor};font-weight:600;white-space:nowrap;">
+              ${statusIcon} ${entry.status === 'uploading' ? entry.progress + '%' : entry.status.toUpperCase()}
+            </span>
+          </div>
+          <div style="font-size:12px;color:#718096;margin-top:2px;">${sizeMB} MB · ${isVideo ? 'Vídeo' : 'Imagem'}</div>
+          ${entry.error ? `<div style="font-size:11px;color:#FC8181;margin-top:3px;">⚠️ ${entry.error}</div>` : ''}
+          ${progressBar}
+        </div>
+        ${canRemove ? `
+        <button onclick="removeBulkFile('${entry.id}')" title="Remover"
+          style="background:none;border:none;cursor:pointer;color:#A0AEC0;padding:4px;border-radius:4px;flex-shrink:0;font-size:18px;line-height:1;"
+          onmouseover="this.style.color='#FC8181'" onmouseout="this.style.color='#A0AEC0'">✕</button>
+        ` : ''}
+      </div>`
+  }).join('')
+}
+
+// Atualiza o resumo no rodapé do modal
+function updateBulkSummary() {
+  const total    = BulkState.files.length
+  const done     = BulkState.files.filter(f => f.status === 'done').length
+  const errors   = BulkState.files.filter(f => f.status === 'error').length
+  const pending  = BulkState.files.filter(f => f.status === 'pending').length
+
+  const el = document.getElementById('bulkSummary')
+  if (!el) return
+
+  if (total === 0) {
+    el.innerText = 'Nenhum arquivo na fila'
+    return
+  }
+
+  const parts = [`Total: ${total}`]
+  if (done)    parts.push(`✅ ${done} enviados`)
+  if (errors)  parts.push(`❌ ${errors} erros`)
+  if (pending) parts.push(`⏳ ${pending} aguardando`)
+  el.innerText = parts.join(' · ')
+}
+
+// Atualiza o status de um item específico sem re-renderizar tudo
+function updateBulkItemUI(entry) {
+  // Re-renderiza só esse item inline para performance
+  const container = document.getElementById('bulkFileList')
+  if (!container) return
+  renderBulkFileList() // simples por enquanto; pode ser otimizado por item se a lista for enorme
+  updateBulkSummary()
+}
+
+// Processa todos os arquivos em fila (um a um para não sobrecarregar TV Box servidor)
+async function startBulkUpload() {
+  if (BulkState.isRunning) return
+  if (BulkState.files.length === 0) {
+    showNotification('Adicione arquivos antes de enviar', 'warning')
+    return
+  }
+
+  // Valida campos obrigatórios
+  const advertiser_id    = document.getElementById('bulkAdvertiser').value
+  const priority         = document.getElementById('bulkPriority').value
+  const start_date       = document.getElementById('bulkStartDate').value
+  const end_date         = document.getElementById('bulkEndDate').value
+  const duration_seconds = parseInt(document.getElementById('bulkDuration').value) || 10
+
+  if (!start_date || !end_date) {
+    showNotification('Preencha as datas de início e fim', 'warning')
+    return
+  }
+
+  BulkState.isRunning = true
+
+  const btn = document.getElementById('btnStartBulkUpload')
+  if (btn) { btn.disabled = true; btn.innerText = 'Enviando...' }
+
+  const pending = BulkState.files.filter(f => f.status === 'pending' || f.status === 'error')
+  let successCount = 0
+  let errorCount   = 0
+
+  for (const entry of pending) {
+    if (!BulkState.isRunning) break
+
+    try {
+      // --- Etapa 1: Compressão ---
+      entry.status = 'compressing'
+      entry.progress = 0
+      updateBulkItemUI(entry)
+
+      const fileToUpload = await compressImage(entry.file)
+
+      // --- Etapa 2: Upload ---
+      entry.status = 'uploading'
+      entry.progress = 10
+      updateBulkItemUI(entry)
+
+      const fileExt  = fileToUpload.name.split('.').pop()
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
+      const filePath = `${currentUser.id}/${fileName}`
+
+      // Simula progresso visual durante upload (Supabase não expõe progresso real)
+      const fakeProgressInterval = setInterval(() => {
+        if (entry.progress < 85) {
+          entry.progress += Math.floor(Math.random() * 12) + 3
+          updateBulkItemUI(entry)
+        }
+      }, 300)
+
+      const { url, error: uploadError } = await apiUploadFile('medias', filePath, fileToUpload)
+      clearInterval(fakeProgressInterval)
+
+      if (uploadError) throw new Error(uploadError.message || 'Erro no upload')
+
+      entry.progress = 95
+      updateBulkItemUI(entry)
+
+      // --- Etapa 3: Salvar no banco ---
+      const mediaType = entry.file.type.startsWith('video/') ? 'video' : 'image'
+      const baseName  = entry.file.name.replace(/\.[^.]+$/, '')
+
+      const { error: dbError } = await apiInsert('campaigns', {
+        advertiser_id: advertiser_id || null,
+        priority,
+        start_date,
+        end_date,
+        duration_seconds,
+        status: 'active',
+        name: baseName,
+        media_url: url,
+        media_type: mediaType,
+        file_path: filePath
+      }, currentUser.id)
+
+      if (dbError) throw dbError
+
+      entry.status   = 'done'
+      entry.progress = 100
+      successCount++
+
+    } catch (err) {
+      entry.status = 'error'
+      entry.error  = err.message || 'Erro desconhecido'
+      errorCount++
+      console.error(`❌ Erro no arquivo ${entry.file.name}:`, err)
+    }
+
+    updateBulkItemUI(entry)
+  }
+
+  BulkState.isRunning = false
+
+  if (btn) {
+    btn.disabled = false
+    btn.innerText = errorCount > 0 ? '🔄 Tentar erros novamente' : '✅ Enviar tudo'
+  }
+
+  // Mensagem final
+  if (successCount > 0 && errorCount === 0) {
+    showNotification(`✅ ${successCount} arquivo(s) enviados com sucesso!`, 'success')
+    loadCampaigns()
+  } else if (successCount > 0 && errorCount > 0) {
+    showNotification(`⚠️ ${successCount} enviados, ${errorCount} com erro`, 'warning')
+    loadCampaigns()
+  } else {
+    showNotification(`❌ Todos os arquivos falharam`, 'error')
+  }
+
+  updateBulkSummary()
+}
+
+// ============================================================
+// === UPLOAD ÚNICO (mantido igual ao v2) =====================
+// ============================================================
 
 async function handleCreateCampaign(e) {
   e.preventDefault()
@@ -205,38 +520,24 @@ async function handleCreateCampaign(e) {
   setLoading('#formNewCampaign button[type="submit"]', true, 'Comprimindo...')
 
   try {
-    // 1. Comprimir imagem antes do upload (vídeos passam direto)
     const fileToUpload = await compressImage(file)
-
     setLoading('#formNewCampaign button[type="submit"]', true, 'Enviando arquivo...')
 
-    // 2. Preparar path no storage
     const fileExt = fileToUpload.name.split('.').pop()
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
     const filePath = `${currentUser.id}/${fileName}`
 
-    // 3. Upload para o bucket 'medias'
     const { url, error: uploadError } = await apiUploadFile('medias', filePath, fileToUpload)
     if (uploadError) throw new Error('Erro no upload: ' + uploadError.message)
 
-    console.log('✅ Arquivo enviado. URL:', url)
-
-    // 4. Tipo de mídia
     const mediaType = file.type.startsWith('video/') ? 'video' : 'image'
 
-    // 5. Salvar no banco
-    const advertiser_id    = document.getElementById('campaignAdvertiser').value
-    const priority         = document.getElementById('campaignPriority').value
-    const start_date       = document.getElementById('campaignStartDate').value
-    const end_date         = document.getElementById('campaignEndDate').value
-    const duration_seconds = parseInt(document.getElementById('campaignDuration').value)
-
     const { error: dbError } = await apiInsert('campaigns', {
-      advertiser_id,
-      priority,
-      start_date,
-      end_date,
-      duration_seconds,
+      advertiser_id:    document.getElementById('campaignAdvertiser').value,
+      priority:         document.getElementById('campaignPriority').value,
+      start_date:       document.getElementById('campaignStartDate').value,
+      end_date:         document.getElementById('campaignEndDate').value,
+      duration_seconds: parseInt(document.getElementById('campaignDuration').value),
       status: 'active',
       name: `Campanha ${new Date().toLocaleDateString()} - ${file.name}`,
       media_url: url,
@@ -246,7 +547,6 @@ async function handleCreateCampaign(e) {
 
     if (dbError) throw dbError
 
-    // 6. Sucesso
     document.getElementById('modalNewCampaign').classList.remove('active')
     document.getElementById('formNewCampaign').reset()
     loadCampaigns()
@@ -267,7 +567,7 @@ async function openEditModal(campaignId) {
     const { data: campaigns } = await apiSelect('campaigns', { eq: { id: campaignId } })
     if (!campaigns || !campaigns[0]) return
     const c = campaigns[0]
-    
+
     document.getElementById('editCampaignId').value = c.id
     document.getElementById('editCampaignAdvertiser').value = c.advertiser_id || ''
     document.getElementById('editCampaignStatus').value = c.status
@@ -275,14 +575,14 @@ async function openEditModal(campaignId) {
     document.getElementById('editCampaignStartDate').value = c.start_date
     document.getElementById('editCampaignEndDate').value = c.end_date
     document.getElementById('editCampaignDuration').value = c.duration_seconds
-    
+
     document.getElementById('modalEditCampaign').classList.add('active')
   } catch (e) { console.error(e) }
 }
 
 async function handleEditCampaign(e) {
   e.preventDefault()
-  
+
   const id = document.getElementById('editCampaignId').value
   const updates = {
     advertiser_id:    document.getElementById('editCampaignAdvertiser').value,
@@ -292,18 +592,18 @@ async function handleEditCampaign(e) {
     end_date:         document.getElementById('editCampaignEndDate').value,
     duration_seconds: parseInt(document.getElementById('editCampaignDuration').value)
   }
-  
+
   setLoading('#formEditCampaign button[type="submit"]', true)
-  
+
   try {
     await apiUpdate('campaigns', id, updates)
     document.getElementById('modalEditCampaign').classList.remove('active')
     loadCampaigns()
     showNotification('Atualizado!', 'success')
-  } catch(e) { 
-    showNotification('Erro ao atualizar', 'error') 
-  } finally { 
-    setLoading('#formEditCampaign button[type="submit"]', false, 'Salvar Alterações') 
+  } catch (e) {
+    showNotification('Erro ao atualizar', 'error')
+  } finally {
+    setLoading('#formEditCampaign button[type="submit"]', false, 'Salvar Alterações')
   }
 }
 
@@ -318,35 +618,54 @@ async function deleteCampaign(id) {
 
 // === HELPERS E EVENTOS ===
 
-function translateStatus(s) { 
-  const m = {'active':'Ativa','paused':'Pausada','completed':'Concluída'}
-  return m[s]||s 
+function translateStatus(s) {
+  const m = { active: 'Ativa', paused: 'Pausada', completed: 'Concluída' }
+  return m[s] || s
 }
 
-function translatePriority(p) { 
-  const m = {'gold':'Ouro','silver':'Prata','bronze':'Bronze'}
-  return m[p]||p 
+function translatePriority(p) {
+  const m = { gold: 'Ouro', silver: 'Prata', bronze: 'Bronze' }
+  return m[p] || p
 }
 
-function formatDate(d) { 
-  if(!d) return '-'
-  return new Date(d).toLocaleDateString('pt-BR') 
+function formatDate(d) {
+  if (!d) return '-'
+  return new Date(d).toLocaleDateString('pt-BR')
 }
 
 function setupEventListeners() {
   setupModalHandlers('modalNewCampaign', 'btnOpenModal', 'btnCloseModal', 'btnCancelModal')
   setupModalHandlers('modalEditCampaign', null, 'btnCloseEditModal', 'btnCancelEditModal')
-  
+
   document.getElementById('formNewCampaign').addEventListener('submit', handleCreateCampaign)
   document.getElementById('formEditCampaign').addEventListener('submit', handleEditCampaign)
-  
+
+  // Botão de upload em massa
+  const btnBulk = document.getElementById('btnOpenBulkModal')
+  if (btnBulk) btnBulk.addEventListener('click', openBulkModal)
+
+  // Fechar modal bulk
+  const btnCloseBulk = document.getElementById('btnCloseBulkModal')
+  if (btnCloseBulk) btnCloseBulk.addEventListener('click', closeBulkModal)
+
+  // Input de arquivos bulk
+  const bulkInput = document.getElementById('bulkMediaInput')
+  if (bulkInput) bulkInput.addEventListener('change', (e) => onBulkFilesSelected(e.target))
+
+  // Botão iniciar upload
+  const btnStart = document.getElementById('btnStartBulkUpload')
+  if (btnStart) btnStart.addEventListener('click', startBulkUpload)
+
+  // Drag & drop
+  setupBulkDragDrop()
+
   const searchInput  = document.getElementById('searchInput')
   const statusFilter = document.getElementById('statusFilter')
-  
+
   searchInput.addEventListener('input', (e) => {
     clearTimeout(searchTimeout)
     searchTimeout = setTimeout(() => loadCampaigns(e.target.value, statusFilter.value), 500)
   })
-  
+
   statusFilter.addEventListener('change', (e) => loadCampaigns(searchInput.value, e.target.value))
 }
