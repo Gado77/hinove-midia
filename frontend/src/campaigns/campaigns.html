@@ -7,6 +7,171 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/frontend/src/shared/theme.css">
   <link rel="stylesheet" href="./campaigns.css">
+  <style>
+    /* ===== MODAL BULK UPLOAD ===== */
+    #modalBulkUpload {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    #modalBulkUpload.active {
+      opacity: 1;
+      pointer-events: all;
+    }
+    .bulk-modal-box {
+      background: #fff;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 640px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+      overflow: hidden;
+    }
+    .bulk-modal-header {
+      padding: 24px 28px 16px;
+      border-bottom: 1px solid #E2E8F0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .bulk-modal-header h2 {
+      margin: 0;
+      font-size: 20px;
+      color: #1A202C;
+    }
+    .bulk-modal-header p {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: #718096;
+    }
+    .bulk-modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .bulk-modal-footer {
+      padding: 16px 28px;
+      border-top: 1px solid #E2E8F0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: #FAFAFA;
+    }
+    #bulkDropZone {
+      border: 2px dashed #CBD5E0;
+      border-radius: 12px;
+      padding: 28px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      background: #F7FAFC;
+    }
+    #bulkDropZone:hover {
+      border-color: #4299E1;
+      background: #EBF8FF;
+    }
+    #bulkDropZone.dragover {
+      border-color: #4299E1 !important;
+      background: #EBF8FF !important;
+    }
+    .bulk-settings {
+      background: #F7FAFC;
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid #E2E8F0;
+    }
+    .bulk-settings-title {
+      margin: 0 0 16px;
+      font-weight: 600;
+      color: #2D3748;
+      font-size: 14px;
+    }
+    .bulk-settings-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .bulk-settings-grid .span2 { grid-column: span 2; }
+    .bulk-field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #4A5568;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .bulk-field select,
+    .bulk-field input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #CBD5E0;
+      border-radius: 8px;
+      font-size: 14px;
+      background: #fff;
+      box-sizing: border-box;
+      font-family: inherit;
+    }
+    #bulkSummary {
+      font-size: 13px;
+      color: #718096;
+    }
+    .btn-bulk-cancel {
+      padding: 10px 20px;
+      border: 1px solid #CBD5E0;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      color: #4A5568;
+      font-family: inherit;
+    }
+    .btn-bulk-start {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px;
+      background: #4299E1;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+    .btn-bulk-start:hover { background: #3182CE; }
+    .btn-bulk-start:disabled { background: #A0AEC0; cursor: not-allowed; }
+    .btn-bulk-open {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border: 1px solid #CBD5E0;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: #2D3748;
+      font-family: inherit;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-bulk-open:hover {
+      background: #F7FAFC;
+      border-color: #4299E1;
+      color: #4299E1;
+    }
+  </style>
 </head>
 <body>
   <div id="sidebar-container"></div>
@@ -18,13 +183,25 @@
           <h1>Gerenciamento de Campanhas</h1>
           <p class="text-muted">Crie, edite e controle suas campanhas publicitárias</p>
         </div>
-        <button id="btnOpenModal" class="btn btn-primary">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-          Nova Campanha
-        </button>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <!-- Botão Upload em Massa -->
+          <button id="btnOpenBulkModal" class="btn-bulk-open">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Upload em Massa
+          </button>
+          <!-- Botão Nova Campanha -->
+          <button id="btnOpenModal" class="btn btn-primary">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Nova Campanha
+          </button>
+        </div>
       </div>
 
       <div class="filter-bar">
@@ -72,7 +249,9 @@
     </main>
   </div>
 
-  <!-- MODAL - CRIAR -->
+  <!-- ================================================
+       MODAL - CRIAR CAMPANHA (único arquivo)
+       ================================================ -->
   <div id="modalNewCampaign" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
@@ -84,7 +263,6 @@
           </svg>
         </button>
       </div>
-
       <form id="formNewCampaign">
         <div class="form-group">
           <label for="campaignAdvertiser">Anunciante *</label>
@@ -92,13 +270,11 @@
             <option value="">Carregando anunciantes...</option>
           </select>
         </div>
-
         <div class="form-group">
           <label for="campaignMedia">Mídia (Arquivo) *</label>
           <input type="file" id="campaignMedia" name="media" required accept="image/*,video/*">
           <small style="color: #718096; margin-top: 4px;">Formatos: JPG, PNG, MP4, WebM</small>
         </div>
-
         <div class="form-group">
           <label for="campaignPriority">Prioridade *</label>
           <select id="campaignPriority" name="priority" required>
@@ -107,7 +283,6 @@
             <option value="gold">Ouro (Alta)</option>
           </select>
         </div>
-
         <div class="form-row">
           <div class="form-group">
             <label for="campaignStartDate">Data de Início *</label>
@@ -118,12 +293,10 @@
             <input type="date" id="campaignEndDate" name="end_date" required>
           </div>
         </div>
-
         <div class="form-group">
           <label for="campaignDuration">Duração de Exibição (segundos) *</label>
           <input type="number" id="campaignDuration" name="duration" min="1" required placeholder="Ex: 15">
         </div>
-
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
           <button type="submit" class="btn btn-primary">Salvar Campanha</button>
@@ -132,7 +305,9 @@
     </div>
   </div>
 
-  <!-- MODAL - EDITAR -->
+  <!-- ================================================
+       MODAL - EDITAR CAMPANHA
+       ================================================ -->
   <div id="modalEditCampaign" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
@@ -144,17 +319,14 @@
           </svg>
         </button>
       </div>
-
       <form id="formEditCampaign">
         <input type="hidden" id="editCampaignId">
-
         <div class="form-group">
           <label for="editCampaignAdvertiser">Anunciante *</label>
           <select id="editCampaignAdvertiser" required>
             <option value="">Carregando anunciantes...</option>
           </select>
         </div>
-
         <div class="form-group">
           <label for="editCampaignStatus">Status</label>
           <select id="editCampaignStatus">
@@ -163,7 +335,6 @@
             <option value="completed">Concluída</option>
           </select>
         </div>
-
         <div class="form-group">
           <label for="editCampaignPriority">Prioridade *</label>
           <select id="editCampaignPriority" required>
@@ -172,7 +343,6 @@
             <option value="gold">Ouro (Alta)</option>
           </select>
         </div>
-
         <div class="form-row">
           <div class="form-group">
             <label for="editCampaignStartDate">Data de Início *</label>
@@ -183,17 +353,107 @@
             <input type="date" id="editCampaignEndDate" required>
           </div>
         </div>
-
         <div class="form-group">
           <label for="editCampaignDuration">Duração de Exibição (segundos) *</label>
           <input type="number" id="editCampaignDuration" min="1" required>
         </div>
-
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="btnCancelEditModal">Cancelar</button>
           <button type="submit" class="btn btn-primary">Salvar Alterações</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ================================================
+       MODAL - UPLOAD EM MASSA
+       ================================================ -->
+  <div id="modalBulkUpload">
+    <div class="bulk-modal-box">
+
+      <!-- Cabeçalho -->
+      <div class="bulk-modal-header">
+        <div>
+          <h2>📦 Upload em Massa</h2>
+          <p>Envie várias imagens ou vídeos de uma vez</p>
+        </div>
+        <button id="btnCloseBulkModal" style="background:none;border:none;cursor:pointer;font-size:22px;color:#A0AEC0;padding:4px;line-height:1;">✕</button>
+      </div>
+
+      <!-- Corpo -->
+      <div class="bulk-modal-body">
+
+        <!-- Zona de drop -->
+        <div id="bulkDropZone" onclick="document.getElementById('bulkMediaInput').click()">
+          <div style="font-size:36px;margin-bottom:8px;">🖼️ 🎬</div>
+          <p style="margin:0;font-weight:600;color:#2D3748;font-size:15px;">
+            Clique para selecionar ou arraste aqui
+          </p>
+          <p style="margin:6px 0 0;font-size:13px;color:#718096;">
+            Imagens (JPG, PNG, WebP) e Vídeos (MP4, MOV) — sem limite de quantidade
+          </p>
+          <input
+            id="bulkMediaInput"
+            type="file"
+            multiple
+            accept="image/*,video/*"
+            style="display:none;"
+          />
+        </div>
+
+        <!-- Lista de arquivos com preview e progresso -->
+        <div id="bulkFileList"></div>
+
+        <!-- Configurações aplicadas a todos -->
+        <div class="bulk-settings">
+          <p class="bulk-settings-title">⚙️ Configurações (aplicadas a todos os arquivos)</p>
+          <div class="bulk-settings-grid">
+
+            <div class="bulk-field span2">
+              <label>Anunciante</label>
+              <select id="bulkAdvertiser">
+                <option value="">Sem anunciante</option>
+              </select>
+            </div>
+
+            <div class="bulk-field">
+              <label>Prioridade</label>
+              <select id="bulkPriority">
+                <option value="bronze">🥉 Bronze</option>
+                <option value="silver" selected>🥈 Prata</option>
+                <option value="gold">🥇 Ouro</option>
+              </select>
+            </div>
+
+            <div class="bulk-field">
+              <label>Duração (segundos)</label>
+              <input id="bulkDuration" type="number" value="10" min="3" max="300" />
+            </div>
+
+            <div class="bulk-field">
+              <label>Data de início *</label>
+              <input id="bulkStartDate" type="date" />
+            </div>
+
+            <div class="bulk-field">
+              <label>Data de fim *</label>
+              <input id="bulkEndDate" type="date" />
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Rodapé -->
+      <div class="bulk-modal-footer">
+        <span id="bulkSummary">Nenhum arquivo na fila</span>
+        <div style="display:flex;gap:10px;">
+          <button class="btn-bulk-cancel" onclick="closeBulkModal()">Cancelar</button>
+          <button id="btnStartBulkUpload" class="btn-bulk-start">✅ Enviar tudo</button>
+        </div>
+      </div>
+
     </div>
   </div>
 
