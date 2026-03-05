@@ -1,6 +1,7 @@
-/* ==================== PLAYER.JS (FINAL v6.7 - CACHE LIMIT) ====================
+/* ==================== PLAYER.JS (v6.8 - Refresh Pairing Code) ====================
    - Feature: 4 orientações: landscape, portrait, landscape-flipped, portrait-flipped.
    - Feature: Vídeos tocam até o fim (ignoram tempo configurado).
+   - Feature: Botão "Atualizar Código" na tela de pareamento — gera novo device_id.
    - Fix Zumbis: Limpeza forçada do DOM.
    - Offline First: Cache automático e reprodução sem internet.
    - Status: Indicador de Wi-Fi.
@@ -58,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupMouseHider();
   let storedId = localStorage.getItem('loopin_device_id');
   if (!storedId) {
-    storedId = `TELA-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    storedId = generateDeviceId();
     localStorage.setItem('loopin_device_id', storedId);
   }
   State.deviceId = storedId;
@@ -66,7 +67,67 @@ document.addEventListener('DOMContentLoaded', () => {
   checkAndStart();
 });
 
-// ==================== 2. INICIALIZAÇÃO ====================
+// ==================== 2. CÓDIGO DE VINCULAÇÃO ====================
+
+function generateDeviceId() {
+  return `TELA-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+}
+
+/*
+  refreshPairingCode() — gera um novo código de vinculação para esta tela.
+
+  Útil quando:
+  - O código foi cadastrado para o cliente errado
+  - Quer desvincular esta TV e vincular a uma nova conta
+  - O código antigo sumiu do sistema por algum motivo
+
+  O que faz:
+  1. Limpa o device_id do localStorage
+  2. Limpa o cache da playlist
+  3. Gera um novo ID aleatório
+  4. Atualiza o display na tela
+  5. Reinicia o polling para tentar vincular com o novo código
+*/
+function refreshPairingCode() {
+  const btn = document.getElementById('refreshPairingBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = 'Gerando...';
+  }
+
+  // Limpa tudo relacionado ao vínculo anterior
+  localStorage.removeItem('loopin_device_id');
+  localStorage.removeItem('loopin_cached_playlist');
+
+  // Para qualquer polling em andamento
+  State.isPlaying = false;
+  State.isRegistered = false;
+  State.playlist = [];
+
+  // Gera novo ID
+  const newId = generateDeviceId();
+  localStorage.setItem('loopin_device_id', newId);
+  State.deviceId = newId;
+
+  console.log(`🔄 Novo Device ID: ${newId}`);
+
+  // Atualiza o display na tela
+  const pairingEl = document.getElementById('pairingCode');
+  if (pairingEl) pairingEl.innerText = newId;
+
+  // Reativa o botão após 2s
+  setTimeout(() => {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = '🔄 Atualizar Código';
+    }
+  }, 2000);
+
+  // Reinicia o polling com o novo código
+  setTimeout(checkAndStart, 2500);
+}
+
+// ==================== 3. INICIALIZAÇÃO ====================
 async function checkAndStart() {
   startClock();
   updateConnectionStatus();
@@ -91,12 +152,21 @@ async function checkAndStart() {
       .maybeSingle();
 
     if (!screen) {
+      // Mostra tela de pareamento COM botão de atualizar
       document.getElementById('setupScreen').classList.remove('hidden');
       document.getElementById('pairingCode').innerText = State.deviceId;
       document.getElementById('playerContainer').classList.add('hidden');
+
+      // Injeta botão se ainda não existir
+      injectRefreshButton();
+
       setTimeout(checkAndStart, CONFIG.POLL_INTERVAL);
       return;
     }
+
+    // Vinculado — esconde botão e segue
+    const btn = document.getElementById('refreshPairingBtn');
+    if (btn) btn.remove();
 
     State.isRegistered = true;
     document.getElementById('setupScreen').classList.add('hidden');
@@ -105,6 +175,55 @@ async function checkAndStart() {
   } catch (err) {
     setTimeout(checkAndStart, CONFIG.POLL_INTERVAL);
   }
+}
+
+/*
+  injectRefreshButton() — injeta o botão de atualizar código na tela de pareamento.
+  Só injeta uma vez (verifica se já existe antes).
+  O botão é inserido dentro de #setupScreen, abaixo do código de pareamento.
+*/
+function injectRefreshButton() {
+  if (document.getElementById('refreshPairingBtn')) return; // já existe
+
+  const setupScreen = document.getElementById('setupScreen');
+  if (!setupScreen) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'refreshPairingBtn';
+  btn.innerText = '🔄 Atualizar Código';
+  btn.title = 'Gera um novo código caso este já esteja em uso ou vinculado ao cliente errado';
+
+  // Estilos inline para garantir que funciona mesmo sem CSS customizado
+  Object.assign(btn.style, {
+    marginTop: '24px',
+    padding: '12px 28px',
+    fontSize: '15px',
+    fontWeight: '600',
+    color: '#ffffff',
+    background: 'rgba(255,255,255,0.12)',
+    border: '1px solid rgba(255,255,255,0.25)',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    letterSpacing: '0.5px',
+    transition: 'background 0.2s, transform 0.1s',
+    display: 'block',
+  });
+
+  btn.onmouseover = () => { btn.style.background = 'rgba(255,255,255,0.22)'; };
+  btn.onmouseout  = () => { btn.style.background = 'rgba(255,255,255,0.12)'; };
+  btn.onmousedown = () => { btn.style.transform = 'scale(0.97)'; };
+  btn.onmouseup   = () => { btn.style.transform = 'scale(1)'; };
+  btn.onclick     = refreshPairingCode;
+
+  // Tenta inserir após o elemento do código de pareamento
+  const pairingEl = document.getElementById('pairingCode');
+  if (pairingEl && pairingEl.parentNode) {
+    pairingEl.parentNode.insertBefore(btn, pairingEl.nextSibling);
+  } else {
+    setupScreen.appendChild(btn);
+  }
+
+  console.log('✅ Botão de atualizar código injetado');
 }
 
 async function startPlayback() {
@@ -139,28 +258,12 @@ async function startPlayback() {
   }
 }
 
-// ==================== 3. DOWNLOAD & CACHE ====================
-/*
-  Estratégia de cache com limite de tamanho:
-
-  1. Monta lista de URLs a baixar (playlist + backgrounds do clima)
-  2. Antes de baixar, chama enforceCacheLimit() que:
-     - Soma o tamanho de todas as entradas já em cache via cache.keys() + resp.blob()
-     - Se ultrapassar CACHE_LIMIT_MB (150MB), deleta as entradas mais antigas
-       até o cache caber — funciona como uma fila FIFO
-  3. Baixa apenas o que ainda não está em cache
-
-  Por que 150MB?
-    TV Box de entrada tem ~8GB de storage mas o browser limita o Cache API
-    a uma fração disso. 150MB é seguro para playlists com 10-20 imagens HD
-    comprimidas + backgrounds de clima, sem risco de estouro.
-*/
+// ==================== 4. DOWNLOAD & CACHE ====================
 async function enforceCacheLimit(cache) {
   try {
     const limitBytes = CONFIG.CACHE_LIMIT_MB * 1024 * 1024;
     const keys = await cache.keys();
 
-    // Coleta tamanho e URL de cada entrada
     const entries = [];
     for (const req of keys) {
       try {
@@ -169,18 +272,15 @@ async function enforceCacheLimit(cache) {
           const blob = await resp.blob();
           entries.push({ url: req.url, size: blob.size });
         }
-      } catch (e) { /* ignora entrada corrompida */ }
+      } catch (e) { }
     }
 
-    // Calcula uso total
     const totalBytes = entries.reduce((acc, e) => acc + e.size, 0);
     const totalMB = (totalBytes / 1024 / 1024).toFixed(1);
     console.log(`💾 Cache atual: ${totalMB}MB / ${CONFIG.CACHE_LIMIT_MB}MB`);
 
-    if (totalBytes <= limitBytes) return; // dentro do limite, nada a fazer
+    if (totalBytes <= limitBytes) return;
 
-    // Remove do mais antigo (primeiro da lista = mais antigo no Cache API)
-    // até caber dentro do limite
     let freed = 0;
     const toDelete = [];
     for (const entry of entries) {
@@ -214,7 +314,6 @@ async function downloadAssets(items) {
     Object.values(WEATHER_BG.day).forEach(url => urlsToCache.push(url));
     Object.values(WEATHER_BG.night).forEach(url => urlsToCache.push(url));
 
-    // Garante que o cache não ultrapasse o limite antes de baixar mais
     await enforceCacheLimit(cache);
 
     const promises = urlsToCache.map(async (url) => {
@@ -231,7 +330,7 @@ async function downloadAssets(items) {
   }
 }
 
-// ==================== 4. BUSCA DE DADOS ====================
+// ==================== 5. BUSCA DE DADOS ====================
 function setupRealtimeUpdates() {
   if (State.realtimeSubscription) return;
   State.realtimeSubscription = supabaseClient
@@ -239,7 +338,7 @@ function setupRealtimeUpdates() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'playlist_items' }, () => fetchPlaylist(false))
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'screens', filter: `device_id=eq.${State.deviceId}` }, () => {
       fetchPlaylist(false);
-      loadSettings(); // Reaplicará orientação automaticamente
+      loadSettings();
     })
     .subscribe();
 }
@@ -340,7 +439,7 @@ async function fetchPlaylist(isFirstLoad) {
   } catch (err) { console.error('Fetch error:', err); }
 }
 
-// ==================== 5. REPRODUÇÃO ====================
+// ==================== 6. REPRODUÇÃO ====================
 async function playNext() {
   resetWatchdog();
 
@@ -377,7 +476,7 @@ async function playNext() {
   }
 }
 
-// ==================== 6. RENDERIZADORES ====================
+// ==================== 7. RENDERIZADORES ====================
 
 async function renderMedia(item, nextSlot, activeSlot) {
   const src = await getCachedUrl(item.url);
@@ -525,7 +624,7 @@ function renderHTML(item, nextSlot, activeSlot) {
   doTransition(activeSlot, nextSlot, item, null);
 }
 
-// ==================== 7. TRANSIÇÃO ====================
+// ==================== 8. TRANSIÇÃO ====================
 function doTransition(curr, next, item, vid) {
   requestAnimationFrame(() => {
     next.classList.add('active');
@@ -547,25 +646,13 @@ function doTransition(curr, next, item, vid) {
   });
 }
 
-// ==================== 8. ORIENTAÇÃO DA TELA (4 MODOS) ====================
-/*
-  Valores aceitos na coluna `orientation` da tabela `screens`:
-
-  "landscape"         → 🖥️  Horizontal normal        (0°)   cabo/entrada pra baixo
-  "landscape-flipped" → 🖥️  Horizontal invertido     (180°) cabo/entrada pra cima
-  "portrait"          → 📱  Vertical — cabo pra direita (90°)
-  "portrait-flipped"  → 📱  Vertical — cabo pra esquerda (-90°)
-*/
+// ==================== 9. ORIENTAÇÃO DA TELA ====================
 function applyOrientation(orientation) {
   const body = document.body;
-
-  // Limpa estilos anteriores primeiro para evitar conflitos
   body.removeAttribute('style');
 
   switch (orientation) {
-
     case 'landscape-flipped':
-      // TV deitada mas de cabeça pra baixo — só rotaciona 180°
       body.style.transform      = 'rotate(180deg)';
       body.style.transformOrigin = 'center center';
       body.style.width          = '100vw';
@@ -574,11 +661,8 @@ function applyOrientation(orientation) {
       body.style.top            = '0';
       body.style.left           = '0';
       body.style.overflow       = 'hidden';
-      console.log('🖥️ Landscape Flipped (180°)');
       break;
-
     case 'portrait':
-      // TV em pé — cabo/conector pra direita (roda 90° sentido horário)
       body.style.transform      = 'rotate(90deg)';
       body.style.transformOrigin = 'center center';
       body.style.width          = '100vh';
@@ -589,11 +673,8 @@ function applyOrientation(orientation) {
       body.style.marginTop      = '-50vw';
       body.style.marginLeft     = '-50vh';
       body.style.overflow       = 'hidden';
-      console.log('📱 Portrait (90° — cabo pra direita)');
       break;
-
     case 'portrait-flipped':
-      // TV em pé — cabo/conector pra esquerda (roda -90° sentido anti-horário)
       body.style.transform      = 'rotate(-90deg)';
       body.style.transformOrigin = 'center center';
       body.style.width          = '100vh';
@@ -604,51 +685,30 @@ function applyOrientation(orientation) {
       body.style.marginTop      = '-50vw';
       body.style.marginLeft     = '-50vh';
       body.style.overflow       = 'hidden';
-      console.log('📱 Portrait Flipped (-90° — cabo pra esquerda)');
       break;
-
     case 'landscape':
     default:
-      // Padrão — horizontal normal, sem rotação
-      console.log('🖥️ Landscape (normal — 0°)');
       break;
   }
 
   State.orientation = orientation || 'landscape';
 }
 
-// ==================== 9. UTILS ====================
-/*
-  purgeSlot(slot) — limpa um slot de mídia sem vazar memória.
-
-  O problema:
-    innerHTML = '' remove o elemento do DOM mas NÃO libera o blob: URL
-    que foi passado como src do <video> ou <img>. O browser mantém o
-    objeto na memória até um revokeObjectURL explícito. Em 8h de exibição
-    com vídeos isso acumula centenas de MB e derruba o TV Box.
-
-  A solução:
-    1. Acha todos os <video> e <img> no slot
-    2. Para o vídeo corretamente (pause + src = '' + load())
-    3. Revoga o blob: URL se existir
-    4. Só então limpa o DOM com innerHTML = ''
-*/
+// ==================== 10. UTILS ====================
 function purgeSlot(slot) {
-  // Pausa e descarrega todos os vídeos do slot
   slot.querySelectorAll('video').forEach(vid => {
     try {
       vid.pause();
       const blobSrc = vid.src;
       vid.removeAttribute('src');
-      vid.load(); // força o browser a liberar o buffer de vídeo
+      vid.load();
       if (blobSrc && blobSrc.startsWith('blob:')) {
         URL.revokeObjectURL(blobSrc);
         console.log('🗑️ Blob vídeo revogado');
       }
-    } catch (e) { /* seguro ignorar */ }
+    } catch (e) { }
   });
 
-  // Revoga blobs de imagens
   slot.querySelectorAll('img').forEach(img => {
     try {
       const blobSrc = img.src;
@@ -656,39 +716,25 @@ function purgeSlot(slot) {
         URL.revokeObjectURL(blobSrc);
         console.log('🗑️ Blob imagem revogado');
       }
-    } catch (e) { /* seguro ignorar */ }
+    } catch (e) { }
   });
 
-  // Agora sim limpa o DOM
   slot.innerHTML = '';
 }
 
-/*
-  getCachedUrl — estratégia por estado de conexão:
-  - ONLINE:  serve a URL pública diretamente. Não cria blob na RAM.
-             O browser faz cache HTTP normalmente. TV Box agradece.
-  - OFFLINE: busca no Cache API e converte para blob: URL local.
-             Sem internet, é a única forma de exibir o arquivo.
-*/
 async function getCachedUrl(url) {
   if (!url) return null;
-
-  // Online → URL direta, zero blob na memória
   if (!State.isOffline) return url;
-
-  // Offline → tenta servir do cache local
   try {
     const cache = await caches.open(CONFIG.CACHE_NAME);
     const resp  = await cache.match(url);
     if (resp) return URL.createObjectURL(await resp.blob());
-  } catch (err) { /* sem cache, cai na URL original */ }
-
+  } catch (err) { }
   return url;
 }
 
 async function loadSettings() {
   try {
-    // Busca user_id E orientation em uma única query
     const { data: s } = await supabaseClient
       .from('screens')
       .select('user_id, orientation')
@@ -696,7 +742,6 @@ async function loadSettings() {
       .maybeSingle();
 
     if (s) {
-      // Aplica orientação — também é chamado pelo realtime ao mudar no admin
       applyOrientation(s.orientation);
 
       const { data: set } = await supabaseClient
@@ -792,4 +837,4 @@ async function requestWakeLock() {
   }
 }
 
-console.log('✅ Player.js V6.7 (Cache Limit) Loaded');
+console.log('✅ Player.js V6.8 (Refresh Pairing Code) Loaded');
