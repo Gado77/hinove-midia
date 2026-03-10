@@ -8,123 +8,108 @@
 async function loadSidebar(activePage) {
   try {
     const container = document.getElementById('sidebar-container')
-    
     if (!container) {
-      console.error('❌ Elemento #sidebar-container não encontrado no HTML')
+      console.error('❌ Elemento #sidebar-container não encontrado')
       return
     }
 
-    console.log('🔄 Carregando sidebar para página:', activePage)
+    const response = await fetch('/frontend/src/shared/sidebar.html')
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
-    // Determina o caminho correto da sidebar baseado na localização atual
-    const sidebarPath = '/frontend/src/shared/sidebar.html'
-    
-    const response = await fetch(sidebarPath)
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: Arquivo não encontrado em ${sidebarPath}`)
-    }
+    container.innerHTML = await response.text()
 
-    const html = await response.text()
-    container.innerHTML = html
-
-    // Marca o link ativo (verde)
+    // Marca link ativo
     if (activePage) {
-      const activeLink = container.querySelector(`.nav-item[data-page="${activePage}"]`)
-      if (activeLink) {
-        activeLink.classList.add('active')
-        console.log('✅ Link ativo marcado:', activePage)
-      }
+      container.querySelector(`.nav-item[data-page="${activePage}"]`)?.classList.add('active')
     }
 
-    // Configura botão de logout
-    const btnLogout = document.getElementById('btnLogout')
-    if (btnLogout) {
-      btnLogout.addEventListener('click', handleLogout)
-    }
-    
-    // Atualiza dados do usuário na sidebar
+    // Logout
+    document.getElementById('btnLogout')?.addEventListener('click', handleLogout)
+
+    // Dados do usuário
     updateSidebarUserInfo()
 
-    console.log('✅ Sidebar carregada com sucesso')
+    // Injeta responsividade mobile em todas as páginas
+    _injectMobileMenu()
 
   } catch (error) {
     console.error('❌ Erro ao carregar sidebar:', error)
     const container = document.getElementById('sidebar-container')
     if (container) {
       container.innerHTML = `
-        <div style="padding: 20px; color: red; background: #fee; border-radius: 8px; margin: 10px;">
+        <div style="padding:20px;color:red;background:#fee;border-radius:8px;margin:10px;">
           <strong>Erro ao carregar menu:</strong> ${error.message}
-          <br><small>Verifique o console (F12) para mais detalhes</small>
         </div>`
     }
   }
 }
 
-// ==================== 2. AUTENTICAÇÃO ====================
+// ==================== 2. INJEÇÃO DO MOBILE MENU ====================
+
+function _injectMobileMenu() {
+  // CSS
+  if (!document.getElementById('mobile-menu-css')) {
+    const link = document.createElement('link')
+    link.id   = 'mobile-menu-css'
+    link.rel  = 'stylesheet'
+    link.href = '/frontend/src/shared/mobile-menu.css'
+    document.head.appendChild(link)
+  }
+  // JS
+  if (!document.getElementById('mobile-menu-js')) {
+    const script = document.createElement('script')
+    script.id  = 'mobile-menu-js'
+    script.src = '/frontend/src/shared/mobile-menu.js'
+    document.body.appendChild(script)
+  }
+}
+
+// ==================== 3. AUTENTICAÇÃO ====================
 
 async function checkAuth() {
   try {
     const { data: { user } } = await supabaseClient.auth.getUser()
-    
     if (!user) {
-      console.warn('⚠️ Usuário não autenticado. Redirecionando para login...')
       window.location.href = '/frontend/src/auth/login.html'
       return null
     }
-
-    console.log('✅ Usuário autenticado:', user.email)
     return user
-
   } catch (error) {
-    console.error('❌ Erro ao verificar autenticação:', error)
     window.location.href = '/frontend/src/auth/login.html'
     return null
   }
 }
 
-// ==================== 3. DADOS DO USUÁRIO NA SIDEBAR ====================
+// ==================== 4. USUÁRIO NA SIDEBAR ====================
 
 async function updateSidebarUserInfo() {
   try {
     const { data: { user } } = await supabaseClient.auth.getUser()
-    
     if (!user) return
-
-    const nameEl = document.getElementById('userName')
-    const emailEl = document.getElementById('userEmail')
+    const name = user.user_metadata?.full_name || user.email?.split('@')[0] || 'Usuário'
+    const nameEl   = document.getElementById('userName')
+    const emailEl  = document.getElementById('userEmail')
     const avatarEl = document.getElementById('avatar')
-
-    const userName = user.user_metadata?.full_name || user.email?.split('@')[0] || 'Usuário'
-    
-    if (nameEl) nameEl.textContent = userName
-    if (emailEl) emailEl.textContent = user.email
-    if (avatarEl) avatarEl.textContent = userName.charAt(0).toUpperCase()
-
-    console.log('✅ Informações do usuário atualizadas')
-
-  } catch (error) {
-    console.error('❌ Erro ao atualizar informações:', error)
-  }
+    if (nameEl)   nameEl.textContent  = name
+    if (emailEl)  emailEl.textContent = user.email
+    if (avatarEl) avatarEl.textContent = name.charAt(0).toUpperCase()
+  } catch (e) { console.error('❌ Erro sidebar user:', e) }
 }
 
-// ==================== 4. LOGOUT ====================
+// ==================== 5. LOGOUT ====================
 
 async function handleLogout() {
   try {
-    console.log('🚪 Realizando logout...')
     await supabaseClient.auth.signOut()
     window.location.href = '/frontend/src/auth/login.html'
   } catch (error) {
-    console.error('❌ Erro ao fazer logout:', error)
     alert('Erro ao sair. Tente novamente.')
   }
 }
 
-// ==================== 5. NOTIFICAÇÕES ====================
+// ==================== 6. NOTIFICAÇÕES ====================
 
-function showNotification(message, type = 'info', duration = 3000) {
-  // Cria container se não existir
+function showNotification(message, type = 'info', duration = 3500) {
   let container = document.getElementById('notifications-container')
   if (!container) {
     container = document.createElement('div')
@@ -134,83 +119,55 @@ function showNotification(message, type = 'info', duration = 3000) {
       top: 20px;
       right: 20px;
       z-index: 9999;
-      max-width: 400px;
+      max-width: 380px;
+      min-width: 260px;
     `
     document.body.appendChild(container)
   }
 
-  // Cria notificação
-  const notification = document.createElement('div')
-  
-  const bgColor = {
-    'success': '#DEF7EC',
-    'error': '#FEE2E2',
-    'warning': '#FEF3C7',
-    'info': '#EFF6FF'
-  }[type] || '#F3F4F6'
+  const colors = {
+    success: { bg:'#DEF7EC', border:'#10B981', text:'#03543F', icon:'✅' },
+    error:   { bg:'#FEE2E2', border:'#EF4444', text:'#7F1D1D', icon:'❌' },
+    warning: { bg:'#FEF3C7', border:'#F59E0B', text:'#92400E', icon:'⚠️' },
+    info:    { bg:'#EFF6FF', border:'#3B82F6', text:'#0C2340', icon:'ℹ️' },
+  }
+  const c = colors[type] || colors.info
 
-  const borderColor = {
-    'success': '#10B981',
-    'error': '#EF4444',
-    'warning': '#F59E0B',
-    'info': '#3B82F6'
-  }[type] || '#9CA3AF'
-
-  const textColor = {
-    'success': '#03543F',
-    'error': '#7F1D1D',
-    'warning': '#92400E',
-    'info': '#0C2340'
-  }[type] || '#374151'
-
-  notification.style.cssText = `
-    background: ${bgColor};
-    border-left: 4px solid ${borderColor};
-    color: ${textColor};
-    padding: 12px 16px;
-    border-radius: 8px;
-    margin-bottom: 12px;
-    font-size: 14px;
-    font-weight: 500;
-    animation: slideIn 0.3s ease-out;
+  const n = document.createElement('div')
+  n.style.cssText = `
+    background:${c.bg};border-left:4px solid ${c.border};color:${c.text};
+    padding:12px 16px;border-radius:8px;margin-bottom:10px;font-size:14px;
+    font-weight:500;display:flex;align-items:flex-start;gap:8px;
+    box-shadow:0 4px 14px rgba(0,0,0,0.1);animation:slideInNotif 0.3s ease-out;
   `
-  notification.textContent = message
-  container.appendChild(notification)
+  n.innerHTML = `<span>${c.icon}</span><span>${message}</span>`
+  container.appendChild(n)
 
-  // Remove após duração
   setTimeout(() => {
-    notification.style.animation = 'slideOut 0.3s ease-out'
-    setTimeout(() => notification.remove(), 300)
+    n.style.animation = 'slideOutNotif 0.3s ease-out'
+    setTimeout(() => n.remove(), 300)
   }, duration)
 }
 
-// Adiciona keyframes de animação
-if (!document.getElementById('notification-styles')) {
-  const style = document.createElement('style')
-  style.id = 'notification-styles'
-  style.textContent = `
-    @keyframes slideIn {
-      from { transform: translateX(400px); opacity: 0; }
-      to { transform: translateX(0); opacity: 1; }
-    }
-    @keyframes slideOut {
-      from { transform: translateX(0); opacity: 1; }
-      to { transform: translateX(400px); opacity: 0; }
-    }
+// Keyframes notificações
+if (!document.getElementById('notif-kf')) {
+  const s = document.createElement('style')
+  s.id = 'notif-kf'
+  s.textContent = `
+    @keyframes slideInNotif  { from{transform:translateX(420px);opacity:0} to{transform:translateX(0);opacity:1} }
+    @keyframes slideOutNotif { from{transform:translateX(0);opacity:1} to{transform:translateX(420px);opacity:0} }
+    @keyframes spin          { to{transform:rotate(360deg)} }
   `
-  document.head.appendChild(style)
+  document.head.appendChild(s)
 }
 
-// ==================== 6. UTILITÁRIOS ====================
+// ==================== 7. UTILITÁRIOS ====================
 
 function escapeHtml(text) {
   if (!text) return ''
   return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#039;')
 }
 
-console.log('✅ Utils carregado com sucesso')
+console.log('✅ Utils carregado')
