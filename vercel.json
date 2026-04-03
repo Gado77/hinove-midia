@@ -1,5 +1,5 @@
 {
-  "outputDirectory": "frontend",
-  "buildCommand": "echo done",
+  "buildCommand": "cp -r frontend output",
+  "outputDirectory": "output",
   "framework": null
 }
