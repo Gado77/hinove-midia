@@ -1,4 +1,4 @@
-// ==================== LOGIN.JS ====================
+﻿// ==================== LOGIN.JS ====================
 
 // Configuração Supabase
 const SUPABASE_URL = 'https://sxsmirhqbslmvyesikgg.supabase.co'
@@ -25,7 +25,7 @@ async function checkExistingLogin() {
     
     if (user) {
       console.log('Usuário já autenticado, redirecionando...')
-      window.location.href = '/frontend/src/dashboard/dashboard.html'
+      window.location.href = '/src/dashboard/dashboard.html'
     }
   } catch (error) {
     console.error('Erro ao verificar login:', error)
@@ -109,7 +109,7 @@ loginForm.addEventListener('submit', async (e) => {
     
     // Pequeno delay antes de redirecionar
     setTimeout(() => {
-      window.location.href = '/frontend/src/dashboard/dashboard.html'
+      window.location.href = '/src/dashboard/dashboard.html'
     }, 500)
 
   } catch (error) {

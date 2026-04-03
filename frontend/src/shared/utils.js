@@ -1,4 +1,4 @@
-/* ==================== UTILS.JS ====================
+﻿/* ==================== UTILS.JS ====================
    Funções compartilhadas entre todas as páginas
    Dependências: config.js (Supabase)
 */
@@ -13,7 +13,7 @@ async function loadSidebar(activePage) {
       return
     }
 
-    const response = await fetch('/frontend/src/shared/sidebar.html')
+    const response = await fetch('/src/shared/sidebar.html')
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
     container.innerHTML = await response.text()
@@ -52,14 +52,14 @@ function _injectMobileMenu() {
     const link = document.createElement('link')
     link.id   = 'mobile-menu-css'
     link.rel  = 'stylesheet'
-    link.href = '/frontend/src/shared/mobile-menu.css'
+    link.href = '/src/shared/mobile-menu.css'
     document.head.appendChild(link)
   }
   // JS
   if (!document.getElementById('mobile-menu-js')) {
     const script = document.createElement('script')
     script.id  = 'mobile-menu-js'
-    script.src = '/frontend/src/shared/mobile-menu.js'
+    script.src = '/src/shared/mobile-menu.js'
     document.body.appendChild(script)
   }
 }
@@ -70,12 +70,12 @@ async function checkAuth() {
   try {
     const { data: { user } } = await supabaseClient.auth.getUser()
     if (!user) {
-      window.location.href = '/frontend/src/auth/login.html'
+      window.location.href = '/src/auth/login.html'
       return null
     }
     return user
   } catch (error) {
-    window.location.href = '/frontend/src/auth/login.html'
+    window.location.href = '/src/auth/login.html'
     return null
   }
 }
@@ -101,7 +101,7 @@ async function updateSidebarUserInfo() {
 async function handleLogout() {
   try {
     await supabaseClient.auth.signOut()
-    window.location.href = '/frontend/src/auth/login.html'
+    window.location.href = '/src/auth/login.html'
   } catch (error) {
     alert('Erro ao sair. Tente novamente.')
   }

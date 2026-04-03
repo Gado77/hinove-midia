@@ -1,4 +1,4 @@
-/* ==================== SETTINGS.JS ====================
+﻿/* ==================== SETTINGS.JS ====================
    Configurações enxutas: Organização, Clima, Segurança, Perigo
 */
 
@@ -303,7 +303,7 @@ function handleClearCache() {
 function handleLogout() {
   if (!confirm('Tem certeza que deseja sair?')) return
   supabaseClient.auth.signOut().then(() => {
-    window.location.href = '/frontend/src/auth/login.html'
+    window.location.href = '/src/auth/login.html'
   })
 }
 
