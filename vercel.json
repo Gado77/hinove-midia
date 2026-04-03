@@ -1,5 +1,0 @@
-{
-  "buildCommand": "mkdir -p vercel_dist && rsync -a frontend/ vercel_dist/ --exclude node_modules",
-  "outputDirectory": "vercel_dist",
-  "framework": null
-}
