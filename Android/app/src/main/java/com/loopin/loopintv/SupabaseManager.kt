@@ -345,10 +345,14 @@ class SupabaseManager(private val context: Context) {
                 .addHeader("Prefer", "return=minimal")
                 .build()
             client.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: java.io.IOException) {}
+                override fun onFailure(call: Call, e: java.io.IOException) {
+                    android.util.Log.w("SupabaseManager", "sendLog failed: ${e.message}")
+                }
                 override fun onResponse(call: Call, response: Response) { response.close() }
             })
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            android.util.Log.w("SupabaseManager", "sendLog error: ${e.message}")
+        }
     }
 
     fun getCacheUsedMb(): Int {

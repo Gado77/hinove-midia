@@ -109,7 +109,7 @@ async function loadScreens(searchTerm = '', statusFilter = 'all') {
     } else {
       result = await apiSelect('screens', {
         userId: currentUser.id,
-        select: '*, locations (name), playlists (name), current_content, cache_used_mb, playlist_items_count',
+        select: '*, locations (name), playlists (name)',
         order: { field: 'created_at', ascending: false }
       })
     }
@@ -171,7 +171,6 @@ function renderScreensTable(screens) {
           ? `<span style="color:#2D3748; font-weight:500;">📍 ${escapeHtml(screen.locations.name)}</span>` 
           : '<span style="color:#CBD5E0;">Sem local</span>'}
       </td>
-      <td><span class="device-id-tag">${screen.device_id || 'PENDENTE'}</span></td>
       <td>
         <div style="font-weight: 500; font-size: 13px; color: #3182CE; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(screen.current_content || '')}">
           ${screen.current_content ? '▶️ ' + escapeHtml(screen.current_content) : '<span style="color: #CBD5E0;">Parado</span>'}
@@ -303,13 +302,9 @@ async function openDiagnosticsModal(screenId) {
 let currentScreenIdForCommand = null
 
 async function sendCommand(command, payload = "") {
-  if (!currentScreenIdForCommand) return
-
-  const btn = event?.target
-  const originalHtml = btn?.innerHTML
-  if (btn) {
-    btn.disabled = true
-    btn.innerHTML = '⏳...'
+  if (!currentScreenIdForCommand) {
+    showNotification('Erro: tela não selecionada', 'error')
+    return
   }
 
   try {
@@ -321,17 +316,10 @@ async function sendCommand(command, payload = "") {
     })
 
     if (error) throw error
-    showNotification(`Comando '${command}' enviado com sucesso!`, 'success')
+    showNotification(`Comando '${command}' enviado! A TV recebe em até 30s.`, 'success')
   } catch (error) {
     console.error('Erro ao enviar comando:', error)
     showNotification('Falha ao enviar comando.', 'error')
-  } finally {
-    if (btn) {
-      setTimeout(() => {
-        btn.disabled = false
-        btn.innerHTML = originalHtml
-      }, 2000)
-    }
   }
 }
 

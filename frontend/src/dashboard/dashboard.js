@@ -215,6 +215,66 @@ async function loadUpcomingCampaigns() {
   }
 }
 
+// ==================== STATUS REALTIME ====================
+
+async function loadRealtimeStatus() {
+  const container = document.getElementById('statusContainer')
+
+  try {
+    const { data: screens, error } = await apiSelect('screens', {
+      userId: currentUser.id,
+      select: 'id, name, status, last_ping',
+      order: { field: 'name', ascending: true }
+    })
+
+    if (error) throw error
+
+    if (!screens || screens.length === 0) {
+      container.innerHTML = '<div style="text-align: center; color: #718096; padding: 24px;">Nenhuma tela monitorada</div>'
+      return
+    }
+
+    // Separa online e offline para mostrar online primeiro
+    const sorted = [...screens].sort((a, b) => {
+      const aOn = isScreenOnline(a) ? 1 : 0
+      const bOn = isScreenOnline(b) ? 1 : 0
+      return bOn - aOn
+    })
+
+    container.innerHTML = sorted.map(screen => {
+      const online = isScreenOnline(screen)
+      const lastSeen = formatLastSeen(screen.last_ping)
+
+      return `
+        <div class="status-item">
+          <div class="status-indicator ${online ? 'online' : 'offline'}"></div>
+          <div class="status-info">
+            <div class="status-name">${escapeHtml(screen.name)}</div>
+            <div class="status-time" style="color: ${online ? '#10B981' : '#A0AEC0'};">
+              ${online ? '● ' + lastSeen : lastSeen}
+            </div>
+          </div>
+          <div style="
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 20px;
+            background: ${online ? 'rgba(16,185,129,0.1)' : 'rgba(160,174,192,0.1)'};
+            color: ${online ? '#10B981' : '#718096'};
+            white-space: nowrap;
+          ">
+            ${online ? 'ONLINE' : 'OFFLINE'}
+          </div>
+        </div>
+      `
+    }).join('')
+
+  } catch (error) {
+    console.error('❌ Erro no Status:', error)
+    container.innerHTML = '<div style="text-align: center; color: #E53E3E;">Erro ao atualizar status</div>'
+  }
+}
+
 // ==================== SISTEMA DE ALERTAS (ATIVO) ====================
 
 async function loadAlerts() {
@@ -242,7 +302,7 @@ async function loadAlerts() {
             alerts.push({
               type: 'danger',
               title: 'Tela Desconectada',
-              msg: `A tela <strong>${s.name}</strong> está offline há mais de 15 minutos.`
+              msg: `A tela <strong>${escapeHtml(s.name)}</strong> está offline há mais de 15 minutos.`
             })
           }
         }
@@ -252,7 +312,7 @@ async function loadAlerts() {
           alerts.push({
             type: 'warning',
             title: 'Playlist Sem Conteúdo',
-            msg: `A tela <strong>${s.name}</strong> está ligada mas não tem itens para exibir.`
+            msg: `A tela <strong>${escapeHtml(s.name)}</strong> está ligada mas não tem itens para exibir.`
           })
         }
       })
@@ -274,7 +334,7 @@ async function loadAlerts() {
           alerts.push({
             type: 'info',
             title: 'Campanha Expirando',
-            msg: `A campanha <strong>${c.name}</strong> encerra em ${formatDate(c.end_date)}.`
+            msg: `A campanha <strong>${escapeHtml(c.name)}</strong> encerra em ${formatDate(c.end_date)}.`
           })
         }
       })
