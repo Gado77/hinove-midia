@@ -388,7 +388,13 @@ class SupabaseManager(private val context: Context) {
 
     fun markCommandExecuted(commandId: String) {
         try {
-            val json = JSONObject().apply { put("executed_at", "now()") }
+            val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }.format(java.util.Date())
+            val json = JSONObject().apply {
+                put("executed_at", timestamp)
+                put("status", "executed")
+            }
             val body = json.toString().toRequestBody("application/json".toMediaType())
             val request = Request.Builder()
                 .url("${SupabaseConfig.URL}/screen_commands?id=eq.${commandId}")
