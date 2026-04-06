@@ -297,9 +297,16 @@ function clearAllNotifications() {
   renderNotifications()
 }
 
-function isWithinBusinessHours(hours1Open, hours1Close, hours2Open, hours2Close) {
+const DAY_MAP = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+
+function isWithinBusinessHours(businessDays, hours1Open, hours1Close, hours2Open, hours2Close) {
   const now = new Date()
+  const currentDay = DAY_MAP[now.getDay()]
   const currentTime = now.getHours() * 60 + now.getMinutes()
+
+  if (!businessDays || !businessDays.includes(currentDay)) {
+    return false
+  }
   
   const parseTime = (t) => {
     if (!t) return null
@@ -365,6 +372,23 @@ function formatBusinessHours(hours1Open, hours1Close, hours2Open, hours2Close) {
   return text
 }
 
+function formatDays(days) {
+  if (!days || days.length === 0) return 'Sem dias definidos'
+  
+  const dayNames = {
+    mon: 'Seg', tue: 'Ter', wed: 'Qua', thu: 'Qui', fri: 'Sex', sat: 'Sáb', sun: 'Dom'
+  }
+  
+  if (days.length === 7) return 'Todos os dias'
+  
+  const mapped = days.map(d => dayNames[d] || d).sort((a, b) => {
+    const order = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+    return order.indexOf(a) - order.indexOf(b)
+  })
+  
+  return mapped.join(', ')
+}
+
 function renderNotifications() {
   const badge = document.getElementById('notificationBadge')
   const count = document.getElementById('notificationCount')
@@ -416,7 +440,7 @@ async function loadNotifications() {
     // 1. Busca telas com local para checar horários
     const { data: screens } = await apiSelect('screens', {
       userId: currentUser.id,
-      select: 'id, name, last_ping, playlist_items_count, active_playlist_id, locations(business_hours_1_open, business_hours_1_close, business_hours_2_open, business_hours_2_close, name)'
+      select: 'id, name, last_ping, playlist_items_count, active_playlist_id, locations(business_days, business_hours_1_open, business_hours_1_close, business_hours_2_open, business_hours_2_close, name)'
     })
 
     if (screens) {
@@ -424,6 +448,7 @@ async function loadNotifications() {
         const isOnline = s.last_ping && (now - new Date(s.last_ping).getTime()) <= FIFTEEN_MINS
         const location = s.locations
         const hasBusinessHours = location && (location.business_hours_1_open || location.business_hours_2_open)
+        const businessDays = location?.business_days || ['mon','tue','wed','thu','fri','sat']
 
         // Tela Offline há mais de 15 min
         if (s.last_ping) {
@@ -441,6 +466,7 @@ async function loadNotifications() {
         // Horário de funcionamento
         if (isOnline && hasBusinessHours && location) {
           const withinHours = isWithinBusinessHours(
+            businessDays,
             location.business_hours_1_open,
             location.business_hours_1_close,
             location.business_hours_2_open,
@@ -452,13 +478,14 @@ async function loadNotifications() {
             location.business_hours_2_open,
             location.business_hours_2_close
           )
+          const daysText = formatDays(businessDays)
           
           if (!withinHours) {
             notifications.push({
               type: 'warning',
               title: 'Fora do Horário',
-              message: `<strong>${escapeHtml(s.name)}</strong> está ligada fora do horário de funcionamento (${hoursText}).`,
-              time: hoursText
+              message: `<strong>${escapeHtml(s.name)}</strong> está ligada fora do horário de funcionamento.`,
+              time: `${daysText} • ${hoursText}`
             })
           }
         }

@@ -115,6 +115,9 @@ async function handleCreateLocation(e) {
   const hours2Open = document.getElementById('locationHours2Open').value
   const hours2Close = document.getElementById('locationHours2Close').value
 
+  const daysCheckboxes = document.querySelectorAll('input[name="business_days"]:checked')
+  const businessDays = Array.from(daysCheckboxes).map(cb => cb.value)
+
   const formData = {
     name: document.getElementById('locationName').value,
     address: document.getElementById('locationAddress').value,
@@ -122,6 +125,7 @@ async function handleCreateLocation(e) {
     manager_phone: document.getElementById('managerPhone').value
   }
 
+  if (businessDays.length > 0) formData.business_days = businessDays
   if (hours1Open) formData.business_hours_1_open = hours1Open
   if (hours1Close) formData.business_hours_1_close = hours1Close
   if (hours2Open) formData.business_hours_2_open = hours2Open
@@ -169,6 +173,15 @@ async function openEditModal(locationId) {
     document.getElementById('editLocationHours2Open').value = loc.business_hours_2_open ? loc.business_hours_2_open.substring(0, 5) : ''
     document.getElementById('editLocationHours2Close').value = loc.business_hours_2_close ? loc.business_hours_2_close.substring(0, 5) : ''
 
+    const days = loc.business_days || ['mon','tue','wed','thu','fri','sat']
+    document.getElementById('editDayMon').checked = days.includes('mon')
+    document.getElementById('editDayTue').checked = days.includes('tue')
+    document.getElementById('editDayWed').checked = days.includes('wed')
+    document.getElementById('editDayThu').checked = days.includes('thu')
+    document.getElementById('editDayFri').checked = days.includes('fri')
+    document.getElementById('editDaySat').checked = days.includes('sat')
+    document.getElementById('editDaySun').checked = days.includes('sun')
+
     document.getElementById('modalEditLocation').classList.add('active')
 
   } catch (error) {
@@ -192,6 +205,13 @@ async function handleEditLocation(e) {
   const hours1Close = document.getElementById('editLocationHours1Close').value
   const hours2Open = document.getElementById('editLocationHours2Open').value
   const hours2Close = document.getElementById('editLocationHours2Close').value
+
+  const dayInputs = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  const selectedDays = dayInputs
+    .filter(d => document.getElementById(`editDay${d}`).checked)
+    .map(d => d.toLowerCase().replace('tue', 'tue').replace('thu', 'thu'))
+
+  if (selectedDays.length > 0) updates.business_days = selectedDays
 
   if (hours1Open) updates.business_hours_1_open = hours1Open
   if (hours1Close) updates.business_hours_1_close = hours1Close

@@ -110,14 +110,49 @@
           <label style="color: #1A202C; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
             🕐 Horário de Funcionamento
           </label>
+          
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; color: #718096; display: block; margin-bottom: 8px;">Dias de funcionamento</label>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="business_days" value="mon" checked style="cursor: pointer;">
+                <span style="font-size: 13px;">Seg</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="business_days" value="tue" checked style="cursor: pointer;">
+                <span style="font-size: 13px;">Ter</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="business_days" value="wed" checked style="cursor: pointer;">
+                <span style="font-size: 13px;">Qua</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="business_days" value="thu" checked style="cursor: pointer;">
+                <span style="font-size: 13px;">Qui</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="business_days" value="fri" checked style="cursor: pointer;">
+                <span style="font-size: 13px;">Sex</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="business_days" value="sat" checked style="cursor: pointer;">
+                <span style="font-size: 13px;">Sáb</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" name="business_days" value="sun" style="cursor: pointer;">
+                <span style="font-size: 13px;">Dom</span>
+              </label>
+            </div>
+          </div>
+
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
             <div>
-              <label style="font-size: 12px; color: #718096;">1º Turno - Abertura</label>
+              <label style="font-size: 12px; color: #718096;">Abertura</label>
               <input type="time" id="locationHours1Open" name="business_hours_1_open" value="08:00">
             </div>
             <div>
-              <label style="font-size: 12px; color: #718096;">1º Turno - Fechamento</label>
-              <input type="time" id="locationHours1Close" name="business_hours_1_close" value="12:00">
+              <label style="font-size: 12px; color: #718096;">Fechamento</label>
+              <input type="time" id="locationHours1Close" name="business_hours_1_close" value="18:00">
             </div>
             <div>
               <label style="font-size: 12px; color: #718096;">2º Turno - Abertura <span style="color: #A0AEC0;">(opcional)</span></label>
@@ -128,7 +163,7 @@
               <input type="time" id="locationHours2Close" name="business_hours_2_close" placeholder="18:00">
             </div>
           </div>
-          <small style="color: #A0AEC0; margin-top: 6px; display: block;">Deixe o 2º turno vazio se não houver intervalo (ex: das 8h às 18h contínuo)</small>
+          <small style="color: #A0AEC0; margin-top: 6px; display: block;">2º turno = intervalo (ex: 12h-14h). Deixe vazio se não houver.</small>
         </div>
 
         <div class="modal-footer">
@@ -180,13 +215,48 @@
           <label style="color: #1A202C; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
             🕐 Horário de Funcionamento
           </label>
+          
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; color: #718096; display: block; margin-bottom: 8px;">Dias de funcionamento</label>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="editDayMon" value="mon" style="cursor: pointer;">
+                <span style="font-size: 13px;">Seg</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="editDayTue" value="tue" style="cursor: pointer;">
+                <span style="font-size: 13px;">Ter</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="editDayWed" value="wed" style="cursor: pointer;">
+                <span style="font-size: 13px;">Qua</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="editDayThu" value="thu" style="cursor: pointer;">
+                <span style="font-size: 13px;">Qui</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="editDayFri" value="fri" style="cursor: pointer;">
+                <span style="font-size: 13px;">Sex</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="editDaySat" value="sat" style="cursor: pointer;">
+                <span style="font-size: 13px;">Sáb</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="editDaySun" value="sun" style="cursor: pointer;">
+                <span style="font-size: 13px;">Dom</span>
+              </label>
+            </div>
+          </div>
+
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
             <div>
-              <label style="font-size: 12px; color: #718096;">1º Turno - Abertura</label>
+              <label style="font-size: 12px; color: #718096;">Abertura</label>
               <input type="time" id="editLocationHours1Open">
             </div>
             <div>
-              <label style="font-size: 12px; color: #718096;">1º Turno - Fechamento</label>
+              <label style="font-size: 12px; color: #718096;">Fechamento</label>
               <input type="time" id="editLocationHours1Close">
             </div>
             <div>
@@ -198,7 +268,7 @@
               <input type="time" id="editLocationHours2Close">
             </div>
           </div>
-          <small style="color: #A0AEC0; margin-top: 6px; display: block;">Deixe o 2º turno vazio se não houver intervalo (ex: das 8h às 18h contínuo)</small>
+          <small style="color: #A0AEC0; margin-top: 6px; display: block;">2º turno = intervalo (ex: 12h-14h). Deixe vazio se não houver.</small>
         </div>
 
         <div class="modal-footer">
