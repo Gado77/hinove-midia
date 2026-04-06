@@ -104,12 +104,21 @@ function renderCampaignsTable(campaigns) {
       <td>${formatDate(campaign.start_date)} até ${formatDate(campaign.end_date)}</td>
       <td>${campaign.duration_seconds || '-'}s</td>
       <td style="text-align: right;">
+        ${campaign.status === 'completed' ? `
+        <button class="btn-icon" onclick="openReactivateModal('${campaign.id}')" title="Reativar" style="color: #10B981;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"></polyline>
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+          </svg>
+        </button>
+        ` : `
         <button class="btn-icon" onclick="openEditModal('${campaign.id}')" title="Editar">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
           </svg>
         </button>
+        `}
         <button class="btn-icon delete" onclick="deleteCampaign('${campaign.id}')" title="Excluir">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"></polyline>
@@ -652,6 +661,47 @@ async function deleteCampaign(id) {
   } catch (e) { showNotification('Erro ao excluir', 'error') }
 }
 
+async function openReactivateModal(campaignId) {
+  try {
+    const { data: campaigns } = await apiSelect('campaigns', { eq: { id: campaignId } })
+    if (!campaigns || !campaigns[0]) return
+    const c = campaigns[0]
+
+    document.getElementById('reactivateCampaignId').value = c.id
+    document.getElementById('reactivateCampaignName').textContent = c.name || 'esta campanha'
+
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    document.getElementById('reactivateEndDate').value = tomorrow.toISOString().split('T')[0]
+    document.getElementById('reactivateEndDate').min = new Date().toISOString().split('T')[0]
+
+    document.getElementById('modalReactivate').classList.add('active')
+  } catch (e) { console.error(e) }
+}
+
+async function handleReactivateCampaign(e) {
+  e.preventDefault()
+
+  const id = document.getElementById('reactivateCampaignId').value
+  const newEndDate = document.getElementById('reactivateEndDate').value
+
+  setLoading('#formReactivate button[type="submit"]', true)
+
+  try {
+    await apiUpdate('campaigns', id, {
+      status: 'active',
+      end_date: newEndDate
+    })
+    document.getElementById('modalReactivate').classList.remove('active')
+    loadCampaigns()
+    showNotification('Campanha reativada!', 'success')
+  } catch (e) {
+    showNotification('Erro ao reativar', 'error')
+  } finally {
+    setLoading('#formReactivate button[type="submit"]', false, 'Reativar')
+  }
+}
+
 // === HELPERS E EVENTOS ===
 
 function translateStatus(s) {
@@ -672,9 +722,11 @@ function formatDate(d) {
 function setupEventListeners() {
   setupModalHandlers('modalNewCampaign', 'btnOpenModal', 'btnCloseModal', 'btnCancelModal')
   setupModalHandlers('modalEditCampaign', null, 'btnCloseEditModal', 'btnCancelEditModal')
+  setupModalHandlers('modalReactivate', null, 'btnCloseReactivate', 'btnCancelReactivate')
 
   document.getElementById('formNewCampaign').addEventListener('submit', handleCreateCampaign)
   document.getElementById('formEditCampaign').addEventListener('submit', handleEditCampaign)
+  document.getElementById('formReactivate').addEventListener('submit', handleReactivateCampaign)
 
   // Botão de upload em massa
   const btnBulk = document.getElementById('btnOpenBulkModal')
