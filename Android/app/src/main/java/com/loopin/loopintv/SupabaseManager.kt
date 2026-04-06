@@ -31,7 +31,8 @@ data class ScreenSettings(
     val screenUuid: String = "",
     val orientation: String = "landscape",
     val orgLogoUrl: String? = null,
-    val weatherApiKey: String? = null
+    val weatherApiKey: String? = null,
+    val isMuted: Boolean = false
 )
 
 data class ScreenCommand(
@@ -74,15 +75,16 @@ class SupabaseManager(private val context: Context) {
 
     fun loadSettings(deviceId: String): ScreenSettings {
         try {
-            val screens = get("/screens?device_id=eq.${deviceId}&select=id,user_id,orientation") ?: return ScreenSettings()
+            val screens = get("/screens?device_id=eq.${deviceId}&select=id,user_id,orientation,is_muted") ?: return ScreenSettings()
             if (screens.length() == 0) return ScreenSettings()
 
             val screen = screens.getJSONObject(0)
             val screenUuid = screen.optString("id", "")
             val userId = screen.optString("user_id", "")
             val orientation = screen.optString("orientation", "landscape")
+            val isMuted = screen.optBoolean("is_muted", false)
 
-            if (userId.isEmpty()) return ScreenSettings(orientation = orientation)
+            if (userId.isEmpty()) return ScreenSettings(orientation = orientation, isMuted = isMuted)
 
             val settings = get("/settings?user_id=eq.${userId}&select=organization_logo_url,api_weather_key")
             val settingsObj = settings?.optJSONObject(0)
@@ -92,7 +94,8 @@ class SupabaseManager(private val context: Context) {
                 screenUuid = screenUuid,
                 orientation = orientation,
                 orgLogoUrl = settingsObj?.optString("organization_logo_url"),
-                weatherApiKey = settingsObj?.optString("api_weather_key")
+                weatherApiKey = settingsObj?.optString("api_weather_key"),
+                isMuted = isMuted
             )
         } catch (e: Exception) {
             android.util.Log.e("SupabaseManager", "loadSettings error: ${e.message}")

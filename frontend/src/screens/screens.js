@@ -364,6 +364,7 @@ async function handleCreateScreen(e) {
   const location_id = document.getElementById('screenLocation').value
   const active_playlist_id = document.getElementById('newScreenPlaylist').value || null
   const orientation = document.getElementById('screenOrientation').value
+  const is_muted = document.getElementById('screenMuted').checked
 
   if (!device_id) {
     showNotification('Código de pareamento é obrigatório', 'warning')
@@ -392,7 +393,8 @@ async function handleCreateScreen(e) {
       location_id,
       orientation,
       device_id,
-      active_playlist_id, // Salva a playlist escolhida
+      active_playlist_id,
+      is_muted,
       status: 'offline'
     }, currentUser.id)
 
@@ -429,6 +431,7 @@ async function openEditModal(screenId) {
     document.getElementById('editScreenOrientation').value = screen.orientation
     document.getElementById('editScreenLocation').value = screen.location_id || ''
     document.getElementById('editScreenPlaylist').value = screen.active_playlist_id || ''
+    document.getElementById('editScreenMuted').checked = screen.is_muted || false
 
     document.getElementById('modalEditScreen').classList.add('active')
 
@@ -446,6 +449,7 @@ async function handleEditScreen(e) {
   const location_id = document.getElementById('editScreenLocation').value
   const orientation = document.getElementById('editScreenOrientation').value
   const active_playlist_id = document.getElementById('editScreenPlaylist').value || null
+  const is_muted = document.getElementById('editScreenMuted').checked
 
   if (!location_id) {
     showNotification('Localização é obrigatória', 'warning')
@@ -459,7 +463,8 @@ async function handleEditScreen(e) {
       name,
       location_id,
       orientation,
-      active_playlist_id
+      active_playlist_id,
+      is_muted
     })
 
     if (error) throw error

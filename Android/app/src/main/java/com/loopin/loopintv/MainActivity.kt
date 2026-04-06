@@ -473,6 +473,7 @@ class MainActivity : AppCompatActivity() {
             currentExoListener = listener
             addListener(listener)
             stop()
+            volume = if (settings.isMuted) 0f else 1f
             setMediaItem(MediaItem.fromUri(path))
             prepare()
             playWhenReady = true
