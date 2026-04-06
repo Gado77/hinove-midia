@@ -470,12 +470,22 @@ tr:last-child td { border-bottom: none; }
 .modal-content {
   background: var(--bg-primary);
   width: 100%;
-  max-width: 550px;
+  max-width: 500px;
+  max-height: 90vh;
   border-radius: var(--radius-xl);
-  box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
   transform: translateY(20px);
   transition: transform 0.3s ease;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--color-border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
 }
 
 .modal-overlay.active .modal-content { transform: translateY(0); }

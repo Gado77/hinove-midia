@@ -157,7 +157,6 @@
                 <span style="margin: 0 4px;">às</span>
                 <input type="time" class="time-input" data-day="sat" data-turn="1_close" value="11:00">
               </div>
-              <small style="color: #A0AEC0; font-size: 11px;">Intervalo definido no padrão Seg-Sex</small>
             </div>
           </div>
 
@@ -168,7 +167,14 @@
                 <input type="checkbox" class="day-checkbox" data-day-single="sun">
                 <strong>Domingo</strong>
               </label>
-              <span style="color: #A0AEC0; font-size: 12px;" class="day-status">Fechado</span>
+            </div>
+            <div class="business-day-body hidden">
+              <div class="turn-row">
+                <label>Das:</label>
+                <input type="time" class="time-input" data-day="sun" data-turn="1_open">
+                <span style="margin: 0 4px;">às</span>
+                <input type="time" class="time-input" data-day="sun" data-turn="1_close">
+              </div>
             </div>
           </div>
         </div>
@@ -266,7 +272,6 @@
                 <span style="margin: 0 4px;">às</span>
                 <input type="time" class="time-input" id="edit_sat_1_close" data-day="sat" data-turn="1_close">
               </div>
-              <small style="color: #A0AEC0; font-size: 11px;">Intervalo definido no padrão Seg-Sex</small>
             </div>
           </div>
 
@@ -277,7 +282,14 @@
                 <input type="checkbox" class="day-checkbox" id="editDaySun" data-day-single="sun">
                 <strong>Domingo</strong>
               </label>
-              <span style="color: #A0AEC0; font-size: 12px;" id="editSunStatus">Fechado</span>
+            </div>
+            <div class="business-day-body hidden" id="editSunBody">
+              <div class="turn-row">
+                <label>Das:</label>
+                <input type="time" class="time-input" id="edit_sun_1_open" data-day="sun" data-turn="1_open">
+                <span style="margin: 0 4px;">às</span>
+                <input type="time" class="time-input" id="edit_sun_1_close" data-day="sun" data-turn="1_close">
+              </div>
             </div>
           </div>
         </div>

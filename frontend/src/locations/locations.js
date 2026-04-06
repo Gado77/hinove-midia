@@ -240,8 +240,12 @@ async function openEditModal(locationId) {
     }
 
     const hasSun = bh.sun
-    document.getElementById('editDaySun').checked = hasSun
-    document.getElementById('editSunStatus').textContent = hasSun ? 'Aberto' : 'Fechado'
+    document.getElementById('editDaySun').checked = !!hasSun
+    document.getElementById('editSunBody').classList.toggle('hidden', !hasSun)
+    if (hasSun) {
+      document.getElementById('edit_sun_1_open').value = hasSun.open || ''
+      document.getElementById('edit_sun_1_close').value = hasSun.close || ''
+    }
 
     document.getElementById('modalEditLocation').classList.add('active')
 
