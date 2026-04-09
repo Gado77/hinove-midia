@@ -188,27 +188,37 @@ class MainActivity : AppCompatActivity() {
     // ==================== CICLO PRINCIPAL ====================
 
     private fun syncAndPlay() {
+        android.util.Log.d("Sync", "=== syncAndPlay START ===")
+        
         if (!isInternetAvailable()) {
             android.util.Log.d("Sync", "Internet não disponível — aguardando 10s")
+            logToPlayer("sync:no_internet", "Aguardando internet...")
             mainHandler.postDelayed({ bgExecutor.execute { syncAndPlay() } }, 10_000)
             return
         }
+        
+        android.util.Log.d("Sync", "Internet OK")
 
         val registered = supabase.isScreenRegistered(deviceId)
 
         if (!registered) {
+            android.util.Log.d("Sync", "Screen não registrada")
+            logToPlayer("sync:not_registered", "Aguardando vinculação...")
             mainHandler.post {
                 showSetupScreen()
                 mainHandler.postDelayed({ bgExecutor.execute { syncAndPlay() } }, 10_000)
             }
             return
         }
+        
+        android.util.Log.d("Sync", "Screen registrada: $deviceId")
 
         val temConteudo = playlist.isNotEmpty()
         if (!temConteudo) mainHandler.post { showLoading("Sincronizando...") }
 
         settings = supabase.loadSettings(deviceId)
         android.util.Log.d("LoopinDEBUG", "ScreenSettings: screenUuid=" + settings.screenUuid + ", userId=" + settings.userId)
+        logToPlayer("sync:settings_loaded", "UUID: ${settings.screenUuid}")
         
         if (settings.screenUuid.isNotEmpty()) {
             bgExecutor.execute {
@@ -219,28 +229,26 @@ class MainActivity : AppCompatActivity() {
         mainHandler.post {
             applyOrientation(settings.orientation)
             applyLogo(settings.orgLogoUrl)
-            // Mostra na tela, temporariamente, o UUID do screen para o usuário conferir
-            val uuidDebug = TextView(this)
-            uuidDebug.text = "SCREEN UUID: ${settings.screenUuid}"
-            uuidDebug.setTextColor(android.graphics.Color.YELLOW)
-            uuidDebug.setBackgroundColor(android.graphics.Color.BLACK)
-            uuidDebug.textSize = 16f
-            uuidDebug.setPadding(20, 20, 20, 20)
-            val layout = findViewById<ViewGroup>(android.R.id.content)
-            layout.addView(uuidDebug)
-            uuidDebug.postDelayed({ layout.removeView(uuidDebug) }, 5000)
         }
 
         val items = supabase.fetchPlaylist(deviceId)
+        android.util.Log.d("Sync", "Playlist fetched: ${items.size} items")
 
         if (items.isEmpty()) {
+            android.util.Log.d("Sync", "Playlist vazia")
+            logToPlayer("sync:playlist_empty", "Aguardando playlist...")
             mainHandler.post { showLoading("Aguardando playlist...") }
             mainHandler.postDelayed({ bgExecutor.execute { syncAndPlay() } }, 15_000)
             return
         }
+        
+        logToPlayer("sync:playlist_fetched", "${items.size} itens")
 
         val withinBusinessHours = isWithinBusinessHours(settings.businessHours)
+        android.util.Log.d("Sync", "Business hours check: $withinBusinessHours")
+        
         if (!withinBusinessHours && settings.businessHours.isNotEmpty()) {
+            logToPlayer("sync:outside_hours", "Fora do horário de funcionamento")
             mainHandler.post { showOutsideBusinessHours() }
             mainHandler.postDelayed({
                 val newWithinHours = isWithinBusinessHours(settings.businessHours)
@@ -256,10 +264,12 @@ class MainActivity : AppCompatActivity() {
             }, 60_000)
             return
         }
+        
+        logToPlayer("sync:business_hours_ok", "Dentro do horário")
 
-        items.filter { it.renderType == "media" && it.url != null }
-            .forEach { supabase.downloadMedia(it.url!!) }
-
+        // Não baixa mais todas as mídias upfront - o renderMedia baixa sob demanda
+        // Isso evita OOM em TV Boxes com RAM limitada
+        
         playlist = items
         currentIndex = -1
 
@@ -271,17 +281,22 @@ class MainActivity : AppCompatActivity() {
                 playNext()
             }
         }
+        
+        logToPlayer("sync:playback_started", "Iniciando reprodução")
 
         mainHandler.postDelayed(object : Runnable {
             override fun run() {
                 bgExecutor.execute {
-                    val newItems = supabase.fetchPlaylist(deviceId)
-                    if (newItems.isNotEmpty() && newItems != playlist) {
-                        newItems.filter { it.renderType == "media" && it.url != null }
-                            .forEach { supabase.downloadMedia(it.url!!) }
-                        val activeUrls = newItems.mapNotNull { it.url }
-                        supabase.cleanupOldMedia(activeUrls)
-                        playlist = newItems
+                    try {
+                        val newItems = supabase.fetchPlaylist(deviceId)
+                        if (newItems.isNotEmpty() && newItems != playlist) {
+                            val activeUrls = newItems.mapNotNull { it.url }
+                            supabase.cleanupOldMedia(activeUrls)
+                            playlist = newItems
+                            logToPlayer("sync:playlist_updated", "${newItems.size} itens")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("Sync", "Erro ao atualizar playlist: ${e.message}")
                     }
                 }
                 mainHandler.postDelayed(this, 60_000)
@@ -399,13 +414,13 @@ class MainActivity : AppCompatActivity() {
             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, fos)
             fos.close()
 
-            val uploadedUrl = supabase.uploadScreenshot(settings.screenUuid, tempFile)
+            val (uploadedUrl, errorDetail) = supabase.uploadScreenshot(settings.screenUuid, tempFile)
             if (uploadedUrl != null) {
                 supabase.sendLog(settings.screenUuid, "screenshot_taken", "Screenshot uploaded: $uploadedUrl")
                 android.util.Log.d("Screenshot", "Upload OK: $uploadedUrl")
             } else {
-                supabase.sendLog(settings.screenUuid, "screenshot_failed", "Falha ao fazer upload do screenshot")
-                android.util.Log.e("Screenshot", "Upload failed")
+                supabase.sendLog(settings.screenUuid, "screenshot_failed", "Falha ao fazer upload: $errorDetail")
+                android.util.Log.e("Screenshot", "Upload failed: $errorDetail")
             }
             tempFile.delete()
         } catch (e: Exception) {
@@ -458,6 +473,18 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { true }
     }
 
+    private fun logToPlayer(eventType: String, message: String) {
+        if (settings.screenUuid.isNotEmpty()) {
+            bgExecutor.execute {
+                try {
+                    supabase.sendLog(settings.screenUuid, eventType, message)
+                } catch (e: Exception) {
+                    android.util.Log.w("LogPlayer", "Erro ao enviar log: ${e.message}")
+                }
+            }
+        }
+    }
+
     // ==================== REPRODUÇÃO ====================
 
     private fun playNext() {
@@ -502,125 +529,171 @@ class MainActivity : AppCompatActivity() {
     // ==================== RENDERIZADOR: MÍDIA ====================
 
     private fun renderMedia(item: PlaylistItem, nextSlot: FrameLayout) {
-        nextSlot.removeAllViews()
+        try {
+            nextSlot.removeAllViews()
 
-        val localPath = item.url?.let { url ->
+            val url = item.url ?: run { playNext(); return }
+            
             val fileName = url.substringAfterLast("/").substringBefore("?")
                 .replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            val file = java.io.File(filesDir, fileName)
-            if (file.exists() && file.length() > 0) file.absolutePath else url
-        } ?: return
+            val file = java.io.File(this.filesDir, fileName)
+            
+            var mediaPath: String? = null
+            
+            if (file.exists() && file.length() > 0) {
+                android.util.Log.d("Media", "Usando cache: $fileName")
+                logToPlayer("media:cache_hit", fileName)
+                mediaPath = file.absolutePath
+            } else if (isInternetAvailable()) {
+                android.util.Log.d("Media", "Baixando: $fileName")
+                logToPlayer("media:downloading", fileName)
+                mediaPath = supabase.downloadMedia(url)
+                if (mediaPath == null) {
+                    android.util.Log.e("Media", "Falha ao baixar: $fileName")
+                    logToPlayer("media:download_failed", fileName)
+                    mainHandler.postDelayed({ playNext() }, 1000)
+                    return
+                }
+            } else {
+                android.util.Log.e("Media", "Offline e sem cache: $fileName")
+                logToPlayer("media:offline_no_cache", fileName)
+                mainHandler.postDelayed({ playNext() }, 1000)
+                return
+            }
 
-        if (item.mediaType == "video") renderVideo(localPath, nextSlot)
-        else renderImage(localPath, item, nextSlot)
+            logToPlayer("media:playing", item.name)
+            
+            if (item.mediaType == "video") renderVideo(mediaPath, nextSlot)
+            else renderImage(mediaPath, item, nextSlot)
+        } catch (e: Exception) {
+            android.util.Log.e("Media", "Erro renderMedia: ${e.message}")
+            logToPlayer("media:error", e.message ?: "erro desconhecido")
+            mainHandler.postDelayed({ playNext() }, 1000)
+        }
     }
 
     private fun renderVideo(path: String, nextSlot: FrameLayout) {
-        if (exoPlayer == null) exoPlayer = ExoPlayer.Builder(this).build()
+        try {
+            if (exoPlayer == null) exoPlayer = ExoPlayer.Builder(this).build()
 
-        val playerView = layoutInflater.inflate(R.layout.player_view, nextSlot, false) as PlayerView
-        playerView.layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
-        )
-        exoPlayerView = playerView
-        nextSlot.addView(playerView)
-        playerView.player = exoPlayer
+            val playerView = layoutInflater.inflate(R.layout.player_view, nextSlot, false) as PlayerView
+            playerView.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            exoPlayerView = playerView
+            nextSlot.addView(playerView)
+            playerView.player = exoPlayer
 
-        exoPlayer?.apply {
-            currentExoListener?.let { removeListener(it) }
-            val listener = object : Player.Listener {
-                override fun onPlaybackStateChanged(state: Int) {
-                    when (state) {
-                        Player.STATE_READY -> doTransition(nextSlot)
-                        Player.STATE_ENDED -> playNext()
-                        else -> {}
+            exoPlayer?.apply {
+                currentExoListener?.let { removeListener(it) }
+                val listener = object : Player.Listener {
+                    override fun onPlaybackStateChanged(state: Int) {
+                        when (state) {
+                            Player.STATE_READY -> doTransition(nextSlot)
+                            Player.STATE_ENDED -> playNext()
+                            else -> {}
+                        }
+                    }
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        android.util.Log.e("MainActivity", "Erro vídeo: ${error.message}")
+                        playNext()
                     }
                 }
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    android.util.Log.e("MainActivity", "Erro vídeo: ${error.message}")
-                    playNext()
-                }
+                currentExoListener = listener
+                addListener(listener)
+                stop()
+                volume = if (settings.isMuted) 0f else 1f
+                setMediaItem(MediaItem.fromUri(path))
+                prepare()
+                playWhenReady = true
             }
-            currentExoListener = listener
-            addListener(listener)
-            stop()
-            volume = if (settings.isMuted) 0f else 1f
-            setMediaItem(MediaItem.fromUri(path))
-            prepare()
-            playWhenReady = true
+        } catch (e: Exception) {
+            android.util.Log.e("RenderVideo", "Erro: ${e.message}")
+            playNext()
         }
     }
 
     private fun renderImage(path: String, item: PlaylistItem, nextSlot: FrameLayout) {
-        val imageView = ImageView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            scaleType = ImageView.ScaleType.CENTER_CROP
-        }
-        nextSlot.addView(imageView)
+        try {
+            val imageView = ImageView(this).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            nextSlot.addView(imageView)
 
-        Glide.with(this).load(path)
-            .into(object : com.bumptech.glide.request.target.CustomTarget<android.graphics.drawable.Drawable>() {
-                override fun onResourceReady(
-                    resource: android.graphics.drawable.Drawable,
-                    transition: com.bumptech.glide.request.transition.Transition<in android.graphics.drawable.Drawable>?
-                ) {
-                    imageView.setImageDrawable(resource)
-                    doTransition(nextSlot)
-                    mainHandler.postDelayed({ playNext() }, (item.duration * 1000).toLong())
-                }
-                override fun onLoadFailed(errorDrawable: android.graphics.drawable.Drawable?) { playNext() }
-                override fun onLoadCleared(placeholder: android.graphics.drawable.Drawable?) {}
-            })
+            Glide.with(this).load(path)
+                .into(object : com.bumptech.glide.request.target.CustomTarget<android.graphics.drawable.Drawable>() {
+                    override fun onResourceReady(
+                        resource: android.graphics.drawable.Drawable,
+                        transition: com.bumptech.glide.request.transition.Transition<in android.graphics.drawable.Drawable>?
+                    ) {
+                        imageView.setImageDrawable(resource)
+                        doTransition(nextSlot)
+                        mainHandler.postDelayed({ playNext() }, (item.duration * 1000).toLong())
+                    }
+                    override fun onLoadFailed(errorDrawable: android.graphics.drawable.Drawable?) { playNext() }
+                    override fun onLoadCleared(placeholder: android.graphics.drawable.Drawable?) {}
+                })
+        } catch (e: Exception) {
+            android.util.Log.e("RenderImage", "Erro: ${e.message}")
+            playNext()
+        }
     }
 
     // ==================== RENDERIZADOR: TEXTO/TICKER ====================
 
     private fun renderTicker(item: PlaylistItem, nextSlot: FrameLayout) {
-        nextSlot.removeAllViews()
+        try {
+            nextSlot.removeAllViews()
 
-        val bgColor = try { Color.parseColor(item.bgColor ?: "#1A202C") }
-        catch (e: Exception) { Color.parseColor("#1A202C") }
+            val bgColor = try { Color.parseColor(item.bgColor ?: "#1A202C") }
+            catch (e: Exception) { Color.parseColor("#1A202C") }
 
-        val textColor = try { Color.parseColor(item.textColor ?: "#FFFFFF") }
-        catch (e: Exception) { Color.WHITE }
+            val textColor = try { Color.parseColor(item.textColor ?: "#FFFFFF") }
+            catch (e: Exception) { Color.WHITE }
 
-        val container = FrameLayout(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            setBackgroundColor(bgColor)
+            val container = FrameLayout(this).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                setBackgroundColor(bgColor)
+            }
+
+            val textView = TextView(this).apply {
+                text = item.text ?: ""
+                setTextColor(textColor)
+                textSize = 32f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                gravity = Gravity.CENTER
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                val pad = (resources.displayMetrics.widthPixels * 0.05f).toInt()
+                setPadding(pad, pad, pad, pad)
+                setShadowLayer(10f, 2f, 2f, Color.parseColor("#88000000"))
+            }
+
+            container.addView(textView)
+            nextSlot.addView(container)
+            doTransition(nextSlot)
+            mainHandler.postDelayed({ playNext() }, (item.duration * 1000).toLong())
+        } catch (e: Exception) {
+            android.util.Log.e("RenderTicker", "Erro: ${e.message}")
+            playNext()
         }
-
-        val textView = TextView(this).apply {
-            text = item.text ?: ""
-            setTextColor(textColor)
-            textSize = 32f
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            val pad = (resources.displayMetrics.widthPixels * 0.05f).toInt()
-            setPadding(pad, pad, pad, pad)
-            setShadowLayer(10f, 2f, 2f, Color.parseColor("#88000000"))
-        }
-
-        container.addView(textView)
-        nextSlot.addView(container)
-        doTransition(nextSlot)
-        mainHandler.postDelayed({ playNext() }, (item.duration * 1000).toLong())
     }
 
     // ==================== RENDERIZADOR: CLIMA ====================
 
     @SuppressLint("SetTextI18n")
     private fun renderWeather(item: PlaylistItem, nextSlot: FrameLayout) {
-        nextSlot.removeAllViews()
-        var weatherBgPlayer: ExoPlayer? = null
+        try {
+            nextSlot.removeAllViews()
+            var weatherBgPlayer: ExoPlayer? = null
 
-        val rootFrame = FrameLayout(this).apply {
+            val rootFrame = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
             )
@@ -763,6 +836,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    } catch (e: Exception) {
+        android.util.Log.e("RenderWeather", "Erro: ${e.message}")
+        playNext()
     }
 
     private data class WeatherData(
@@ -911,24 +987,29 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun renderHtml(item: PlaylistItem, nextSlot: FrameLayout) {
-        nextSlot.removeAllViews()
-        val webView = WebView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = false
-            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            setBackgroundColor(Color.BLACK)
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?) = true
+        try {
+            nextSlot.removeAllViews()
+            val webView = WebView(this).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.mediaPlaybackRequiresUserGesture = false
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                setBackgroundColor(Color.BLACK)
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?) = true
+                }
+                loadData(item.html ?: "", "text/html", "UTF-8")
             }
-            loadData(item.html ?: "", "text/html", "UTF-8")
+            nextSlot.addView(webView)
+            doTransition(nextSlot)
+            mainHandler.postDelayed({ webView.destroy(); playNext() }, (item.duration * 1000).toLong())
+        } catch (e: Exception) {
+            android.util.Log.e("RenderHtml", "Erro: ${e.message}")
+            playNext()
         }
-        nextSlot.addView(webView)
-        doTransition(nextSlot)
-        mainHandler.postDelayed({ webView.destroy(); playNext() }, (item.duration * 1000).toLong())
     }
 
     // ==================== TRANSIÇÃO ====================
@@ -1071,47 +1152,52 @@ class MainActivity : AppCompatActivity() {
     private fun isWithinBusinessHours(businessHours: Map<String, BusinessHour>): Boolean {
         if (businessHours.isEmpty()) return true
 
-        val calendar = java.util.Calendar.getInstance()
-        val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK)
-        val currentDay = when (dayOfWeek) {
-            java.util.Calendar.MONDAY -> "mon"
-            java.util.Calendar.TUESDAY -> "tue"
-            java.util.Calendar.WEDNESDAY -> "wed"
-            java.util.Calendar.THURSDAY -> "thu"
-            java.util.Calendar.FRIDAY -> "fri"
-            java.util.Calendar.SATURDAY -> "sat"
-            java.util.Calendar.SUNDAY -> "sun"
-            else -> return true
-        }
+        try {
+            val calendar = java.util.Calendar.getInstance()
+            val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK)
+            val currentDay = when (dayOfWeek) {
+                java.util.Calendar.MONDAY -> "mon"
+                java.util.Calendar.TUESDAY -> "tue"
+                java.util.Calendar.WEDNESDAY -> "wed"
+                java.util.Calendar.THURSDAY -> "thu"
+                java.util.Calendar.FRIDAY -> "fri"
+                java.util.Calendar.SATURDAY -> "sat"
+                java.util.Calendar.SUNDAY -> "sun"
+                else -> return true
+            }
 
-        val daySchedule = businessHours[currentDay] ?: return true
-        if (daySchedule.open.isEmpty() || daySchedule.close.isEmpty()) return true
+            val daySchedule = businessHours[currentDay] ?: return true
+            if (daySchedule.open.isEmpty() || daySchedule.close.isEmpty()) return true
 
-        val currentMinutes = calendar.get(java.util.Calendar.HOUR_OF_DAY) * 60 + calendar.get(java.util.Calendar.MINUTE)
+            val currentMinutes = calendar.get(java.util.Calendar.HOUR_OF_DAY) * 60 + calendar.get(java.util.Calendar.MINUTE)
 
-        fun parseTime(time: String): Int {
-            val parts = time.split(":")
-            if (parts.size != 2) return 0
-            return parts[0].toIntOrNull()?.times(60)?.plus(parts[1].toIntOrNull() ?: 0) ?: 0
-        }
+            fun parseTime(time: String): Int {
+                val parts = time.split(":")
+                if (parts.size != 2) return 0
+                return parts[0].toIntOrNull()?.times(60)?.plus(parts[1].toIntOrNull() ?: 0) ?: 0
+            }
 
-        val openMinutes = parseTime(daySchedule.open)
-        val closeMinutes = parseTime(daySchedule.close)
+            val openMinutes = parseTime(daySchedule.open)
+            val closeMinutes = parseTime(daySchedule.close)
 
-        if (currentMinutes >= openMinutes && currentMinutes < closeMinutes) {
-            return true
-        }
-
-        val turn2 = daySchedule.turn2
-        if (turn2 != null && turn2.open.isNotEmpty() && turn2.close.isNotEmpty()) {
-            val open2Minutes = parseTime(turn2.open)
-            val close2Minutes = parseTime(turn2.close)
-            if (currentMinutes >= open2Minutes && currentMinutes < close2Minutes) {
+            if (currentMinutes >= openMinutes && currentMinutes < closeMinutes) {
                 return true
             }
-        }
 
-        return false
+            val turn2 = daySchedule.turn2
+            if (turn2 != null && turn2.open.isNotEmpty() && turn2.close.isNotEmpty()) {
+                val open2Minutes = parseTime(turn2.open)
+                val close2Minutes = parseTime(turn2.close)
+                if (currentMinutes >= open2Minutes && currentMinutes < close2Minutes) {
+                    return true
+                }
+            }
+
+            return false
+        } catch (e: Exception) {
+            android.util.Log.w("BusinessHours", "Erro ao verificar horário: ${e.message}")
+            return true
+        }
     }
 
     private var outsideHoursView: View? = null

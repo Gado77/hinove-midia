@@ -1,0 +1,12 @@
+{
+  "name": "loopin-media-worker",
+  "version": "1.0.0",
+  "description": "Upload de mídias direto no R2 para o Loopin.tv",
+  "main": "src/index.js",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

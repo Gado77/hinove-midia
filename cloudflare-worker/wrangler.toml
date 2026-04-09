@@ -1,0 +1,13 @@
+name = "loopin-media-worker"
+main = "src/index.js"
+compatibility_date = "2024-04-09"
+
+# Liga o seu código R2 ao bucket que você configurou no Cloudflare
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "loopin-media"
+
+# Variáveis globais usadas pelo seu código
+[vars]
+SUPABASE_URL = "https://sxsmirhqbslmvyesikgg.supabase.co"
+PUBLIC_R2_URL = "https://pub-7f59ad5c421b4ae6b6343caf3733476c.r2.dev"

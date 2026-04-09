@@ -478,36 +478,47 @@ class SupabaseManager(private val context: Context) {
         }
     }
 
-    fun uploadScreenshot(screenUuid: String, file: java.io.File): String? {
+    fun uploadScreenshot(screenUuid: String, file: java.io.File): Pair<String?, String?> {
         return try {
             val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-            val fileName = "screenshots/${screenUuid}_$timestamp.png"
+            val objectName = "${screenUuid}_$timestamp.png"
+
+            android.util.Log.d("SupabaseManager", "Upload: file=${file.absolutePath}, size=${file.length()}")
 
             val requestBody = okhttp3.RequestBody.create("image/png".toMediaType(), file)
-            val multipartBody = okhttp3.MultipartBody.Part.createFormData("file", fileName, requestBody)
+            val multipartBody = okhttp3.MultipartBody.Builder()
+                .setType(okhttp3.MultipartBody.FORM)
+                .addFormDataPart("file", objectName, requestBody)
+                .build()
+
+            val uploadUrl = "${SupabaseConfig.URL}/storage/v1/object/screenshots/$objectName"
+            android.util.Log.d("SupabaseManager", "Upload URL: $uploadUrl")
 
             val request = okhttp3.Request.Builder()
-                .url("${SupabaseConfig.URL}/storage/v1/object/screenshots/$fileName")
+                .url(uploadUrl)
                 .post(multipartBody)
                 .addHeader("apikey", SupabaseConfig.API_KEY)
                 .addHeader("Authorization", "Bearer ${SupabaseConfig.API_KEY}")
-                .addHeader("Content-Type", "image/png")
                 .build()
 
             val response = client.newCall(request).execute()
+            val responseCode = response.code
             val responseBody = response.body?.string()
 
+            android.util.Log.d("SupabaseManager", "Response code: $responseCode, body: $responseBody")
+
             if (response.isSuccessful) {
-                val publicUrl = "${SupabaseConfig.URL}/storage/v1/object/public/screenshots/$fileName"
+                val publicUrl = "${SupabaseConfig.URL}/storage/v1/object/public/screenshots/$objectName"
                 android.util.Log.d("SupabaseManager", "Screenshot uploaded: $publicUrl")
-                publicUrl
+                Pair(publicUrl, null)
             } else {
                 android.util.Log.e("SupabaseManager", "Upload failed: $responseBody")
-                null
+                Pair(null, "HTTP $responseCode: $responseBody")
             }
         } catch (e: Exception) {
             android.util.Log.e("SupabaseManager", "Upload error: ${e.message}")
-            null
+            e.printStackTrace()
+            Pair(null, "Exception: ${e.message}")
         }
     }
 }

@@ -156,8 +156,8 @@ async function apiUploadFile(bucket, filePath, file) {
     const { data: { session } } = await supabaseClient.auth.getSession()
     if (!session) throw new Error("Não autenticado")
 
-    // Chama a Edge Function do Supabase que faz upload no R2
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/upload-to-r2`, {
+    // Chama o Cloudflare Worker que configuramos
+    const response = await fetch(`${CLOUDFLARE_WORKER_URL}/upload`, {
       method: "POST",
       headers: {
         "Content-Type": file.type || "application/octet-stream",
@@ -168,14 +168,14 @@ async function apiUploadFile(bucket, filePath, file) {
 
     if (!response.ok) {
       const errorData = await response.json()
-      throw new Error(errorData.error || "Upload falhou")
+      throw new Error(errorData.error || "Upload falhou no Worker")
     }
 
     const result = await response.json()
     return { url: result.url, error: null }
 
   } catch (error) {
-    console.error(`❌ Erro ao fazer upload:`, error)
+    console.error(`❌ Erro ao fazer upload no R2:`, error)
     return { url: null, error }
   }
 }
@@ -187,19 +187,27 @@ async function apiDeleteFile(bucket, fileUrl) {
   
   try {
     const urlParts = fileUrl.split('/')
-    const fileName = urlParts[urlParts.length - 1].split('?')[0]
+    // No R2 protegemos os arquivos do usuario dentro do diretorio ID Dele
+    // Precisamos de user_id/nome_do_arquivo.jpg
+    const workerFilePath = `${urlParts[urlParts.length - 2]}/${urlParts[urlParts.length - 1].split('?')[0]}`
+
+    const { data: { session } } = await supabaseClient.auth.getSession()
+    if (!session) throw new Error("Não autenticado")
     
-    const { error } = await supabaseClient.storage
-      .from(bucket)
-      .remove([fileName])
+    // Deleta o arquivo no Worker Cloudflare R2
+    await fetch(`${CLOUDFLARE_WORKER_URL}/delete`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ path: workerFilePath })
+    })
     
-    if (error) {
-      console.warn(`⚠️ Erro ao deletar arquivo ${fileName}:`, error)
-    }
-    return { error }
+    return { error: null }
     
   } catch (error) {
-    console.warn(`⚠️ Erro ao deletar arquivo:`, error)
+    console.warn(`⚠️ Aviso: falha ao deletar arquivo fisico em R2:`, error)
     return { error }
   }
 }
