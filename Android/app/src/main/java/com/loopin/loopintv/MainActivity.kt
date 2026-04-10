@@ -434,10 +434,12 @@ class MainActivity : AppCompatActivity() {
     private fun tryCaptureFromTextureView(): Bitmap? {
         try {
             val textureView = findTextureView()
-            if (textureView != null && textureView.bitmap != null) {
+            if (textureView != null) {
                 val bitmap = textureView.bitmap
-                android.util.Log.d("Screenshot", "Captured via TextureView: ${bitmap.width}x${bitmap.height}")
-                return bitmap
+                if (bitmap != null) {
+                    android.util.Log.d("Screenshot", "Captured via TextureView: ${bitmap.width}x${bitmap.height}")
+                    return bitmap
+                }
             }
         } catch (e: Exception) {
             android.util.Log.e("Screenshot", "TextureView capture error: ${e.message}")
