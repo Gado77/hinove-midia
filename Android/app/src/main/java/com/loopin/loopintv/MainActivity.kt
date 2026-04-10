@@ -2,8 +2,17 @@ package com.loopin.loopintv
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -12,6 +21,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -51,6 +61,11 @@ class MainActivity : AppCompatActivity() {
     private var exoPlayer: ExoPlayer? = null
     private var exoPlayerView: PlayerView? = null
     private var currentExoListener: Player.Listener? = null
+
+    private var mediaProjection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
+    private var screenshotPendingIntent: android.app.PendingIntent? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bgExecutor = Executors.newSingleThreadExecutor()
@@ -400,32 +415,189 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun takeRemoteScreenshot() {
+        mainHandler.post {
+            try {
+                val bitmap = tryCaptureFromTextureView()
+                if (bitmap != null && !bitmap.isRecycled) {
+                    uploadScreenshotBitmap(bitmap)
+                    return@post
+                }
+                android.util.Log.d("Screenshot", "TextureView capture failed, trying MediaProjection")
+                startMediaProjectionCapture()
+            } catch (e: Exception) {
+                android.util.Log.e("Screenshot", "Error: ${e.message}")
+                tryFallbackCapture()
+            }
+        }
+    }
+
+    private fun tryCaptureFromTextureView(): Bitmap? {
         try {
-            val rootView = findViewById<View>(android.R.id.content).rootView
-            val bitmap = android.graphics.Bitmap.createBitmap(rootView.width, rootView.height, android.graphics.Bitmap.Config.ARGB_8888)
-            val canvas = android.graphics.Canvas(bitmap)
-            rootView.draw(canvas)
+            val textureView = findTextureView()
+            if (textureView != null && textureView.bitmap != null) {
+                val bitmap = textureView.bitmap
+                android.util.Log.d("Screenshot", "Captured via TextureView: ${bitmap.width}x${bitmap.height}")
+                return bitmap
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("Screenshot", "TextureView capture error: ${e.message}")
+        }
+        return null
+    }
 
-            val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-            val fileName = "screenshot_${deviceId}_$timestamp.png"
+    private fun findTextureView(): TextureView? {
+        return findViewById<ViewGroup>(android.R.id.content)?.let { root ->
+            findTextureViewRecursive(root)
+        }
+    }
 
-            val tempFile = java.io.File(cacheDir, fileName)
+    private fun findTextureViewRecursive(viewGroup: ViewGroup): TextureView? {
+        for (i in 0 until viewGroup.childCount) {
+            val child = viewGroup.getChildAt(i)
+            if (child is TextureView) {
+                return child
+            }
+            if (child is ViewGroup) {
+                val found = findTextureViewRecursive(child)
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
+    private fun startMediaProjectionCapture() {
+        try {
+            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val intent = projectionManager.createScreenCaptureIntent()
+            val requestCode = 999
+            startActivityForResult(intent, requestCode)
+        } catch (e: Exception) {
+            android.util.Log.e("Screenshot", "MediaProjection error: ${e.message}")
+            tryFallbackCapture()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 999 && resultCode == RESULT_OK && data != null) {
+            captureWithMediaProjection(data)
+        } else {
+            android.util.Log.d("Screenshot", "MediaProjection permission denied")
+            tryFallbackCapture()
+        }
+    }
+
+    private fun captureWithMediaProjection(data: Intent) {
+        try {
+            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjection = projectionManager.getMediaProjection(android.app.Activity.RESULT_OK, data)
+
+            val width = window.decorView.width
+            val height = window.decorView.height
+            val density = resources.displayMetrics.densityDpi
+
+            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            virtualDisplay = mediaProjection?.createVirtualDisplay(
+                "Screenshot",
+                width, height, density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader?.surface, null, null
+            )
+
+            mainHandler.postDelayed({
+                try {
+                    val image = imageReader?.acquireLatestImage()
+                    if (image != null) {
+                        val planes = image.planes
+                        val buffer = planes[0].buffer
+                        val pixelStride = planes[0].pixelStride
+                        val rowStride = planes[0].rowStride
+                        val rowPadding = rowStride - pixelStride * width
+
+                        val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
+                        bitmap.copyPixelsFromBuffer(buffer)
+                        val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
+                        bitmap.recycle()
+                        image.close()
+
+                        cleanupMediaProjection()
+
+                        if (croppedBitmap != null && !croppedBitmap.isRecycled) {
+                            android.util.Log.d("Screenshot", "Captured via MediaProjection: ${croppedBitmap.width}x${croppedBitmap.height}")
+                            uploadScreenshotBitmap(croppedBitmap)
+                        }
+                    } else {
+                        android.util.Log.e("Screenshot", "ImageReader returned null")
+                        tryFallbackCapture()
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("Screenshot", "MediaProjection capture error: ${e.message}")
+                    tryFallbackCapture()
+                }
+            }, 500)
+        } catch (e: Exception) {
+            android.util.Log.e("Screenshot", "MediaProjection setup error: ${e.message}")
+            tryFallbackCapture()
+        }
+    }
+
+    private fun cleanupMediaProjection() {
+        try {
+            virtualDisplay?.release()
+            virtualDisplay = null
+            imageReader?.close()
+            imageReader = null
+            mediaProjection?.stop()
+            mediaProjection = null
+        } catch (e: Exception) {
+            android.util.Log.e("Screenshot", "Cleanup error: ${e.message}")
+        }
+    }
+
+    private fun tryFallbackCapture() {
+        mainHandler.post {
+            try {
+                val rootView = findViewById<View>(android.R.id.content).rootView
+                val bitmap = Bitmap.createBitmap(rootView.width, rootView.height, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                rootView.draw(canvas)
+
+                android.util.Log.d("Screenshot", "Captured via fallback: ${bitmap.width}x${bitmap.height}")
+                uploadScreenshotBitmap(bitmap)
+            } catch (e: Exception) {
+                android.util.Log.e("Screenshot", "Fallback capture error: ${e.message}")
+                supabase.sendLog(settings.screenUuid, "screenshot_error", "Erro fallback: ${e.message}")
+            }
+        }
+    }
+
+    private fun uploadScreenshotBitmap(bitmap: Bitmap) {
+        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+        val fileName = "screenshot_${deviceId}_$timestamp.png"
+
+        val tempFile = java.io.File(cacheDir, fileName)
+        try {
             val fos = java.io.FileOutputStream(tempFile)
-            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, fos)
+            bitmap.compress(Bitmap.CompressFormat.PNG, 90, fos)
             fos.close()
 
-            val (uploadedUrl, errorDetail) = supabase.uploadScreenshot(settings.screenUuid, tempFile)
-            if (uploadedUrl != null) {
-                supabase.sendLog(settings.screenUuid, "screenshot_taken", "Screenshot uploaded: $uploadedUrl")
-                android.util.Log.d("Screenshot", "Upload OK: $uploadedUrl")
-            } else {
-                supabase.sendLog(settings.screenUuid, "screenshot_failed", "Falha ao fazer upload: $errorDetail")
-                android.util.Log.e("Screenshot", "Upload failed: $errorDetail")
+            bgExecutor.execute {
+                val (uploadedUrl, errorDetail) = supabase.uploadScreenshot(settings.screenUuid, tempFile)
+                if (uploadedUrl != null) {
+                    supabase.sendLog(settings.screenUuid, "screenshot_taken", "Screenshot uploaded: $uploadedUrl")
+                    android.util.Log.d("Screenshot", "Upload OK: $uploadedUrl")
+                } else {
+                    supabase.sendLog(settings.screenUuid, "screenshot_failed", "Falha ao fazer upload: $errorDetail")
+                    android.util.Log.e("Screenshot", "Upload failed: $errorDetail")
+                }
+                if (!tempFile.isDirectory) tempFile.delete()
             }
-            tempFile.delete()
         } catch (e: Exception) {
-            android.util.Log.e("Screenshot", "Error: ${e.message}")
-            supabase.sendLog(settings.screenUuid, "screenshot_error", "Erro: ${e.message}")
+            android.util.Log.e("Screenshot", "File write error: ${e.message}")
+            supabase.sendLog(settings.screenUuid, "screenshot_error", "Erro ao salvar: ${e.message}")
+        } finally {
+            if (!bitmap.isRecycled) bitmap.recycle()
         }
     }
 
@@ -529,46 +701,56 @@ class MainActivity : AppCompatActivity() {
     // ==================== RENDERIZADOR: MÍDIA ====================
 
     private fun renderMedia(item: PlaylistItem, nextSlot: FrameLayout) {
-        try {
-            nextSlot.removeAllViews()
-
-            val url = item.url ?: run { playNext(); return }
-            
-            val fileName = url.substringAfterLast("/").substringBefore("?")
-                .replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            val file = java.io.File(this.filesDir, fileName)
-            
-            var mediaPath: String? = null
-            
-            if (file.exists() && file.length() > 0) {
-                android.util.Log.d("Media", "Usando cache: $fileName")
-                logToPlayer("media:cache_hit", fileName)
-                mediaPath = file.absolutePath
-            } else if (isInternetAvailable()) {
-                android.util.Log.d("Media", "Baixando: $fileName")
-                logToPlayer("media:downloading", fileName)
-                mediaPath = supabase.downloadMedia(url)
-                if (mediaPath == null) {
-                    android.util.Log.e("Media", "Falha ao baixar: $fileName")
-                    logToPlayer("media:download_failed", fileName)
+        bgExecutor.execute {
+            try {
+                val url = item.url ?: run { mainHandler.post { playNext() }; return@execute }
+                
+                val fileName = url.substringAfterLast("/").substringBefore("?")
+                    .replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                val file = java.io.File(this.filesDir, fileName)
+                
+                var mediaPath: String? = null
+                
+                if (file.exists() && file.length() > 0) {
+                    android.util.Log.d("Media", "Usando cache: $fileName")
+                    logToPlayer("media:cache_hit", fileName)
+                    mediaPath = file.absolutePath
+                } else if (isInternetAvailable()) {
+                    android.util.Log.d("Media", "Baixando: $fileName")
+                    logToPlayer("media:downloading", fileName)
+                    mediaPath = supabase.downloadMedia(url)
+                    if (mediaPath == null) {
+                        android.util.Log.e("Media", "Falha ao baixar: $fileName")
+                        logToPlayer("media:download_failed", fileName)
+                        mainHandler.postDelayed({ playNext() }, 1000)
+                        return@execute
+                    }
+                } else {
+                    android.util.Log.e("Media", "Offline e sem cache: $fileName")
+                    logToPlayer("media:offline_no_cache", fileName)
                     mainHandler.postDelayed({ playNext() }, 1000)
-                    return
+                    return@execute
                 }
-            } else {
-                android.util.Log.e("Media", "Offline e sem cache: $fileName")
-                logToPlayer("media:offline_no_cache", fileName)
-                mainHandler.postDelayed({ playNext() }, 1000)
-                return
-            }
 
-            logToPlayer("media:playing", item.name)
-            
-            if (item.mediaType == "video") renderVideo(mediaPath, nextSlot)
-            else renderImage(mediaPath, item, nextSlot)
-        } catch (e: Exception) {
-            android.util.Log.e("Media", "Erro renderMedia: ${e.message}")
-            logToPlayer("media:error", e.message ?: "erro desconhecido")
-            mainHandler.postDelayed({ playNext() }, 1000)
+                logToPlayer("media:playing", item.name)
+
+                mainHandler.post {
+                    try {
+                        nextSlot.removeAllViews()
+                        if (item.mediaType == "video") renderVideo(mediaPath, nextSlot)
+                        else renderImage(mediaPath, item, nextSlot)
+                    } catch (e: Exception) {
+                        android.util.Log.e("Media", "Erro render UI: ${e.message}")
+                        logToPlayer("media:error", e.message ?: "erro desconhecido UI")
+                        mainHandler.postDelayed({ playNext() }, 1000)
+                    }
+                }
+                
+            } catch (e: Exception) {
+                android.util.Log.e("Media", "Erro renderMedia: ${e.message}")
+                logToPlayer("media:error", e.message ?: "erro desconhecido background")
+                mainHandler.postDelayed({ playNext() }, 1000)
+            }
         }
     }
 
@@ -840,6 +1022,7 @@ class MainActivity : AppCompatActivity() {
         android.util.Log.e("RenderWeather", "Erro: ${e.message}")
         playNext()
     }
+}
 
     private data class WeatherData(
         val temp: Int, val description: String, val humidity: Int,
